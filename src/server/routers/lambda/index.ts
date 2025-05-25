@@ -1,12 +1,14 @@
 /**
  * This file contains the root router of Lobe Chat tRPC-backend
  */
-import { publicProcedure, router } from '@/libs/trpc';
+import { publicProcedure, router } from '@/libs/trpc/lambda';
 
 import { agentRouter } from './agent';
 import { aiModelRouter } from './aiModel';
 import { aiProviderRouter } from './aiProvider';
 import { chunkRouter } from './chunk';
+import { documentRouter } from './document';
+import { exporterRouter } from './exporter';
 import { fileRouter } from './file';
 import { importerRouter } from './importer';
 import { knowledgeBaseRouter } from './knowledgeBase';
@@ -24,6 +26,8 @@ export const lambdaRouter = router({
   aiModel: aiModelRouter,
   aiProvider: aiProviderRouter,
   chunk: chunkRouter,
+  document: documentRouter,
+  exporter: exporterRouter,
   file: fileRouter,
   healthcheck: publicProcedure.query(() => "i'm live!"),
   importer: importerRouter,

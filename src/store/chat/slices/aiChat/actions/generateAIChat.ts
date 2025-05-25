@@ -18,9 +18,11 @@ import { getAiInfraStoreState } from '@/store/aiInfra/store';
 import { chatHelpers } from '@/store/chat/helpers';
 import { ChatStore } from '@/store/chat/store';
 import { messageMapKey } from '@/store/chat/utils/messageMapKey';
+import { getFileStoreState } from '@/store/file/store';
 import { useSessionStore } from '@/store/session';
 import { WebBrowsingManifest } from '@/tools/web-browsing';
 import { ChatMessage, CreateMessageParams, SendMessageParams } from '@/types/message';
+import { ChatImageItem } from '@/types/message/image';
 import { MessageSemanticSearchChunk } from '@/types/rag';
 import { setNamespace } from '@/utils/storeDebug';
 
@@ -214,6 +216,12 @@ export const generateAIChat: StateCreator<
       skipRefresh: !onlyAddUserMessage && newMessage.fileList?.length === 0,
     });
 
+    if (!id) {
+      set({ isCreatingMessage: false }, false, n('creatingMessage/start'));
+      if (!!newTopicId) get().internal_updateTopicLoading(newTopicId, false);
+      return;
+    }
+
     if (tempMessageId) get().internal_toggleMessageLoading(false, tempMessageId);
 
     // switch to the new topic if create the new topic
@@ -344,6 +352,8 @@ export const generateAIChat: StateCreator<
 
     const assistantId = await get().internal_createMessage(assistantMessage);
 
+    if (!assistantId) return;
+
     // 3. place a search with the search working model if this model is not support tool use
     const isModelSupportToolUse = aiModelSelectors.isModelSupportToolUse(
       model,
@@ -377,6 +387,12 @@ export const generateAIChat: StateCreator<
               provider,
             });
           }
+        },
+        trace: {
+          traceId: params?.traceId,
+          sessionId: get().activeId,
+          topicId: get().activeTopicId,
+          traceName: TraceNameMap.SearchIntentRecognition,
         },
         abortController,
         onMessageHandle: async (chunk) => {
@@ -533,6 +549,8 @@ export const generateAIChat: StateCreator<
     let thinking = '';
     let thinkingStartAt: number;
     let duration: number;
+    // to upload image
+    const uploadTasks: Map<string, Promise<{ id?: string; url?: string }>> = new Map();
 
     const historySummary = topicSelectors.currentActiveTopicSummary(get());
     await chatService.createAssistantMessageStream({
@@ -558,7 +576,7 @@ export const generateAIChat: StateCreator<
       },
       onFinish: async (
         content,
-        { traceId, observationId, toolCalls, reasoning, grounding, usage },
+        { traceId, observationId, toolCalls, reasoning, grounding, usage, speed },
       ) => {
         // if there is traceId, update it
         if (traceId) {
@@ -569,16 +587,41 @@ export const generateAIChat: StateCreator<
           });
         }
 
-        if (toolCalls && toolCalls.length > 0) {
+        // 等待所有图片上传完成
+        let finalImages: ChatImageItem[] = [];
+
+        if (uploadTasks.size > 0) {
+          try {
+            // 等待所有上传任务完成
+            const uploadResults = await Promise.all(uploadTasks.values());
+
+            // 使用上传后的 S3 URL 替换原始图像数据
+            finalImages = uploadResults.filter((i) => !!i.url) as ChatImageItem[];
+          } catch (error) {
+            console.error('Error waiting for image uploads:', error);
+          }
+        }
+
+        let parsedToolCalls = toolCalls;
+        if (parsedToolCalls && parsedToolCalls.length > 0) {
           internal_toggleToolCallingStreaming(messageId, undefined);
+          parsedToolCalls = parsedToolCalls.map((item) => ({
+            ...item,
+            function: {
+              ...item.function,
+              arguments: !!item.function.arguments ? item.function.arguments : '{}',
+            },
+          }));
+          isFunctionCall = true;
         }
 
         // update the content after fetch result
         await internal_updateMessageContent(messageId, content, {
-          toolCalls,
+          toolCalls: parsedToolCalls,
           reasoning: !!reasoning ? { ...reasoning, duration } : undefined,
           search: !!grounding?.citations ? grounding : undefined,
-          metadata: usage,
+          imageList: finalImages.length > 0 ? finalImages : undefined,
+          metadata: speed ? { ...usage, ...speed } : usage,
         });
       },
       onMessageHandle: async (chunk) => {
@@ -605,13 +648,44 @@ export const generateAIChat: StateCreator<
             break;
           }
 
+          case 'base64_image': {
+            internal_dispatchMessage({
+              id: messageId,
+              type: 'updateMessage',
+              value: {
+                imageList: chunk.images.map((i) => ({ id: i.id, url: i.data, alt: i.id })),
+              },
+            });
+            const image = chunk.image;
+
+            const task = getFileStoreState()
+              .uploadBase64FileWithProgress(image.data)
+              .then((value) => ({
+                id: value?.id,
+                url: value?.url,
+                alt: value?.filename || value?.id,
+              }));
+
+            uploadTasks.set(image.id, task);
+
+            break;
+          }
+
           case 'text': {
             output += chunk.text;
 
             // if there is no duration, it means the end of reasoning
             if (!duration) {
               duration = Date.now() - thinkingStartAt;
-              internal_toggleChatReasoning(false, messageId, n('generateMessage(end)') as string);
+
+              const isInChatReasoning = chatSelectors.isMessageInChatReasoning(messageId)(get());
+              if (isInChatReasoning) {
+                internal_toggleChatReasoning(
+                  false,
+                  messageId,
+                  n('toggleChatReasoning/false') as string,
+                );
+              }
             }
 
             internal_dispatchMessage({
@@ -629,7 +703,11 @@ export const generateAIChat: StateCreator<
             // if there is no thinkingStartAt, it means the start of reasoning
             if (!thinkingStartAt) {
               thinkingStartAt = Date.now();
-              internal_toggleChatReasoning(true, messageId, n('generateMessage(end)') as string);
+              internal_toggleChatReasoning(
+                true,
+                messageId,
+                n('toggleChatReasoning/true') as string,
+              );
             }
 
             thinking += chunk.text;
@@ -658,10 +736,7 @@ export const generateAIChat: StateCreator<
 
     internal_toggleChatLoading(false, messageId, n('generateMessage(end)') as string);
 
-    return {
-      isFunctionCall,
-      traceId: msgTraceId,
-    };
+    return { isFunctionCall, traceId: msgTraceId };
   },
 
   internal_resendMessage: async (

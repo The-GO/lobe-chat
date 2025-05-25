@@ -24,8 +24,8 @@ import {
   LobeZeroOneAI,
   LobeZhipuAI,
   ModelProvider,
-} from '@/libs/agent-runtime';
-import { AgentRuntime } from '@/libs/agent-runtime';
+} from '@/libs/model-runtime';
+import { AgentRuntime } from '@/libs/model-runtime';
 import { agentChatConfigSelectors } from '@/store/agent/selectors';
 import { aiModelSelectors } from '@/store/aiInfra';
 import { useToolStore } from '@/store/tool';
@@ -65,6 +65,7 @@ beforeEach(() => {
   vi.mock('@/const/version', () => ({
     isServerMode: false,
     isDeprecatedEdition: true,
+    isDesktop: false,
   }));
 });
 
@@ -878,6 +879,7 @@ describe('ChatService', () => {
         vi.doMock('@/const/version', () => ({
           isServerMode: true,
           isDeprecatedEdition: false,
+          isDesktop: false,
         }));
 
         // 需要在修改模拟后重新导入相关模块
@@ -965,6 +967,7 @@ describe('ChatService', () => {
         vi.doMock('@/const/version', () => ({
           isServerMode: true,
           isDeprecatedEdition: true,
+          isDesktop: false,
         }));
 
         // 需要在修改模拟后重新导入相关模块
@@ -1378,7 +1381,7 @@ describe('AgentRuntimeOnClient', () => {
 
       it('ZhiPu AI provider: with apiKey', async () => {
         // Mock the generateApiToken function
-        vi.mock('@/libs/agent-runtime/zhipu/authToken', () => ({
+        vi.mock('@/libs/model-runtime/zhipu/authToken', () => ({
           generateApiToken: vi
             .fn()
             .mockResolvedValue(
