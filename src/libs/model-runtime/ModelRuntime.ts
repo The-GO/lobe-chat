@@ -8,7 +8,7 @@ import { LobeCloudflareParams } from './cloudflare';
 import { LobeOpenAI } from './openai';
 import { providerRuntimeMap } from './runtimeMap';
 import {
-  ChatCompetitionOptions,
+  ChatMethodOptions,
   ChatStreamPayload,
   EmbeddingsOptions,
   EmbeddingsPayload,
@@ -17,6 +17,7 @@ import {
   TextToImagePayload,
   TextToSpeechPayload,
 } from './types';
+import { CreateImagePayload } from './types/image';
 
 export interface AgentChatOptions {
   enableTrace?: boolean;
@@ -60,12 +61,16 @@ class ModelRuntime {
    * }));
    * ```
    */
-  async chat(payload: ChatStreamPayload, options?: ChatCompetitionOptions) {
-    return this._runtime.chat(payload, options);
+  async chat(payload: ChatStreamPayload, options?: ChatMethodOptions) {
+    return this._runtime.chat!(payload, options);
   }
 
   async textToImage(payload: TextToImagePayload) {
     return this._runtime.textToImage?.(payload);
+  }
+
+  async createImage(payload: CreateImagePayload) {
+    return this._runtime.createImage?.(payload);
   }
 
   async models() {

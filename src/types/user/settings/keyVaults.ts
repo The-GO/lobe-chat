@@ -3,6 +3,10 @@ export interface OpenAICompatibleKeyVault {
   baseURL?: string;
 }
 
+export interface FalKeyVault {
+  apiKey?: string;
+}
+
 export interface AzureOpenAIKeyVault {
   apiKey?: string;
   apiVersion?: string;
@@ -43,6 +47,7 @@ export interface UserKeyVaults extends SearchEngineKeyVaults {
   cloudflare?: CloudflareKeyVault;
   cohere?: OpenAICompatibleKeyVault;
   deepseek?: OpenAICompatibleKeyVault;
+  fal?: FalKeyVault;
   fireworksai?: OpenAICompatibleKeyVault;
   giteeai?: OpenAICompatibleKeyVault;
   github?: OpenAICompatibleKeyVault;
@@ -58,6 +63,7 @@ export interface UserKeyVaults extends SearchEngineKeyVaults {
   lobehub?: any;
   minimax?: OpenAICompatibleKeyVault;
   mistral?: OpenAICompatibleKeyVault;
+  modelscope?: OpenAICompatibleKeyVault;
   moonshot?: OpenAICompatibleKeyVault;
   novita?: OpenAICompatibleKeyVault;
   nvidia?: OpenAICompatibleKeyVault;
@@ -79,6 +85,7 @@ export interface UserKeyVaults extends SearchEngineKeyVaults {
   tencentcloud?: OpenAICompatibleKeyVault;
   togetherai?: OpenAICompatibleKeyVault;
   upstage?: OpenAICompatibleKeyVault;
+  v0?: OpenAICompatibleKeyVault;
   vertexai?: OpenAICompatibleKeyVault;
   vllm?: OpenAICompatibleKeyVault;
   volcengine?: OpenAICompatibleKeyVault;

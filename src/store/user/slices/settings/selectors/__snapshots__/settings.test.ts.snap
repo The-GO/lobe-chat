@@ -55,6 +55,10 @@ exports[`settingsSelectors > currentSystemAgent > should merge DEFAULT_SYSTEM_AG
     "provider": "openai",
   },
   "enableAutoReply": true,
+  "generationTopic": {
+    "model": "gpt-4.1-mini",
+    "provider": "openai",
+  },
   "historyCompress": {
     "model": "gpt-4.1-mini",
     "provider": "openai",
@@ -108,7 +112,7 @@ exports[`settingsSelectors > defaultAgent > should merge DEFAULT_AGENT and s.set
       "enableCompressHistory": true,
       "enableHistoryCount": true,
       "enableReasoning": false,
-      "historyCount": 8,
+      "historyCount": 20,
       "reasoningBudgetToken": 1024,
       "searchFCModel": {
         "model": "gpt-4.1-mini",
@@ -152,7 +156,7 @@ exports[`settingsSelectors > defaultAgentConfig > should merge DEFAULT_AGENT_CON
     "enableCompressHistory": true,
     "enableHistoryCount": true,
     "enableReasoning": false,
-    "historyCount": 8,
+    "historyCount": 20,
     "reasoningBudgetToken": 1024,
     "searchFCModel": {
       "model": "gpt-4.1-mini",

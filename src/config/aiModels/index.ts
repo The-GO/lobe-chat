@@ -10,6 +10,7 @@ import { default as bedrock } from './bedrock';
 import { default as cloudflare } from './cloudflare';
 import { default as cohere } from './cohere';
 import { default as deepseek } from './deepseek';
+import { default as fal } from './fal';
 import { default as fireworksai } from './fireworksai';
 import { default as giteeai } from './giteeai';
 import { default as github } from './github';
@@ -24,6 +25,7 @@ import { default as jina } from './jina';
 import { default as lmstudio } from './lmstudio';
 import { default as minimax } from './minimax';
 import { default as mistral } from './mistral';
+import { default as modelscope } from './modelscope';
 import { default as moonshot } from './moonshot';
 import { default as novita } from './novita';
 import { default as nvidia } from './nvidia';
@@ -44,6 +46,7 @@ import { default as taichu } from './taichu';
 import { default as tencentcloud } from './tencentcloud';
 import { default as togetherai } from './togetherai';
 import { default as upstage } from './upstage';
+import { default as v0 } from './v0';
 import { default as vertexai } from './vertexai';
 import { default as vllm } from './vllm';
 import { default as volcengine } from './volcengine';
@@ -83,6 +86,7 @@ export const LOBE_DEFAULT_MODEL_LIST = buildDefaultModelList({
   cloudflare,
   cohere,
   deepseek,
+  fal,
   fireworksai,
   giteeai,
   github,
@@ -97,6 +101,7 @@ export const LOBE_DEFAULT_MODEL_LIST = buildDefaultModelList({
   lmstudio,
   minimax,
   mistral,
+  modelscope,
   moonshot,
   novita,
   nvidia,
@@ -117,6 +122,7 @@ export const LOBE_DEFAULT_MODEL_LIST = buildDefaultModelList({
   tencentcloud,
   togetherai,
   upstage,
+  v0,
   vertexai,
   vllm,
   volcengine,
@@ -137,6 +143,7 @@ export { default as bedrock } from './bedrock';
 export { default as cloudflare } from './cloudflare';
 export { default as cohere } from './cohere';
 export { default as deepseek } from './deepseek';
+export { default as fal } from './fal';
 export { default as fireworksai } from './fireworksai';
 export { default as giteeai } from './giteeai';
 export { default as github } from './github';
@@ -149,8 +156,10 @@ export { default as infiniai } from './infiniai';
 export { default as internlm } from './internlm';
 export { default as jina } from './jina';
 export { default as lmstudio } from './lmstudio';
+export { default as lobehub } from './lobehub';
 export { default as minimax } from './minimax';
 export { default as mistral } from './mistral';
+export { default as modelscope } from './modelscope';
 export { default as moonshot } from './moonshot';
 export { default as novita } from './novita';
 export { default as nvidia } from './nvidia';
@@ -171,6 +180,7 @@ export { default as taichu } from './taichu';
 export { default as tencentcloud } from './tencentcloud';
 export { default as togetherai } from './togetherai';
 export { default as upstage } from './upstage';
+export { default as v0 } from './v0';
 export { default as vertexai } from './vertexai';
 export { default as vllm } from './vllm';
 export { default as volcengine } from './volcengine';
