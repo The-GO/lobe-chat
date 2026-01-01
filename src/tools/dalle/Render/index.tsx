@@ -28,12 +28,15 @@ const DallE = memo<BuiltinRenderProps<DallEImageItem[]>>(({ content, messageId }
     <Flexbox gap={16}>
       <PreviewGroup
         preview={{
-          actionsRender: (_, info) => (
-            <ActionIcon
-              color={'#fff'}
-              icon={Download}
-              onClick={() => handleDownload(info.current)}
-            />
+          actionsRender: (originalNode, info) => (
+            <>
+              {originalNode}
+              <ActionIcon
+                color={'#fff'}
+                icon={Download}
+                onClick={() => handleDownload(info.current)}
+              />
+            </>
           ),
         }}
       >
