@@ -16,6 +16,13 @@ import {
 import { type UserSettings } from '@/types/user/settings';
 
 export class UserService {
+  getUserActivitySummary = async (): Promise<{
+    lastUserMessageAt: Date | null;
+    userCreatedAt: Date | null;
+  }> => {
+    return lambdaClient.user.getUserActivitySummary.query();
+  };
+
   getUserRegistrationDuration = async (): Promise<{
     createdAt: string;
     duration: number;
@@ -40,6 +47,21 @@ export class UserService {
     topicId: string;
   }> => {
     return lambdaClient.user.getOrCreateOnboardingState.query();
+  };
+
+  getOnboardingBootstrapState = async (): Promise<{
+    agentId: string;
+    agentOnboarding: UserAgentOnboarding;
+    context: UserAgentOnboardingContext;
+    feedbackSubmitted: boolean;
+    hasMessages: boolean;
+    topicId: string | null;
+  }> => {
+    return lambdaClient.user.getOnboardingBootstrapState.query();
+  };
+
+  sendOnboardingFirstMessage = async (input: { agentId: string }) => {
+    return lambdaClient.user.sendOnboardingFirstMessage.mutate(input);
   };
 
   getOnboardingAgentContext = async (): Promise<{

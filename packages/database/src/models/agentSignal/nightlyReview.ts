@@ -1,3 +1,4 @@
+import { INBOX_SESSION_ID } from '@lobechat/const';
 import {
   and,
   asc,
@@ -15,6 +16,7 @@ import {
 
 import { agents, messagePlugins, messages, topics, users, userSettings } from '../../schemas';
 import type { LobeChatDatabase } from '../../type';
+import { normalizeInboxAgentTitle } from '../../utils/inboxAgent';
 
 /**
  * Normalizes database aggregate timestamps.
@@ -155,7 +157,7 @@ export class AgentSignalNightlyReviewModel {
   };
 
   /**
-   * Lists active non-virtual agents for one user's review window.
+   * Lists active agent targets for one user's review window.
    *
    * Use when:
    * - The scheduler must avoid running inactive agents
@@ -164,11 +166,12 @@ export class AgentSignalNightlyReviewModel {
    * Expects:
    * - `windowStart` and `windowEnd` are UTC instants for the user's local review date
    * - Message `agentId` wins when present; topic `agentId` covers legacy messages
+   * - Virtual agents are excluded except the product-owned Lobe AI inbox agent
    *
    * Returns:
-   * - Non-virtual agent targets with message/topic/failure counts
+   * - Agent targets with message/topic/failure counts
    */
-  listActiveAgentTargets = (
+  listActiveAgentTargets = async (
     userId: string,
     options: ListAgentSignalNightlyReviewTargetsOptions,
   ) => {
@@ -185,31 +188,51 @@ export class AgentSignalNightlyReviewModel {
         firstActivityAt: sql<Date>`MIN(${messages.createdAt})`.mapWith(parseAggregateTimestamp),
         lastActivityAt: sql<Date>`MAX(${messages.createdAt})`.mapWith(parseAggregateTimestamp),
         messageCount: count(messages.id),
+        slug: agents.slug,
         timezone: sql<string>`COALESCE(${userSettings.general}->>'timezone', 'UTC')`,
         title: agents.title,
         topicCount: countDistinct(messages.topicId),
       })
       .from(messages)
-      .leftJoin(topics, and(eq(topics.id, messages.topicId), eq(topics.userId, userId)))
-      .innerJoin(agents, and(eq(agents.id, effectiveAgentId), eq(agents.userId, userId)))
+      .leftJoin(
+        topics,
+        and(eq(topics.id, messages.topicId), eq(topics.userId, userId), isNull(topics.workspaceId)),
+      )
+      .innerJoin(
+        agents,
+        and(eq(agents.id, effectiveAgentId), eq(agents.userId, userId), isNull(agents.workspaceId)),
+      )
       .leftJoin(userSettings, eq(userSettings.id, userId))
       .leftJoin(
         messagePlugins,
-        and(eq(messagePlugins.id, messages.id), eq(messagePlugins.userId, userId)),
+        and(
+          eq(messagePlugins.id, messages.id),
+          eq(messagePlugins.userId, userId),
+          isNull(messagePlugins.workspaceId),
+        ),
       )
       .where(
         and(
           eq(messages.userId, userId),
+          isNull(messages.workspaceId),
           agentFilter,
           gte(messages.createdAt, options.windowStart),
           lte(messages.createdAt, options.windowEnd),
-          or(eq(agents.virtual, false), isNull(agents.virtual)),
-          sql`COALESCE((${agents.chatConfig}->'selfIteration'->>'enabled')::boolean, false) = true`,
+          or(eq(agents.virtual, false), isNull(agents.virtual), eq(agents.slug, INBOX_SESSION_ID)),
+          or(
+            eq(agents.slug, INBOX_SESSION_ID),
+            sql`COALESCE((${agents.chatConfig}->'selfIteration'->>'enabled')::boolean, false) = true`,
+          ),
         ),
       )
-      .groupBy(agents.id, agents.title, userSettings.general)
+      .groupBy(agents.id, agents.title, agents.slug, userSettings.general)
       .orderBy(sql`MAX(${messages.createdAt}) DESC`);
 
-    return options.limit !== undefined ? query.limit(options.limit) : query;
+    const rows = await (options.limit !== undefined ? query.limit(options.limit) : query);
+
+    return rows.map(({ slug, ...row }) => ({
+      ...row,
+      title: normalizeInboxAgentTitle(row.title, { slug }),
+    }));
   };
 }

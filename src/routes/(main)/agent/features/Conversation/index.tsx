@@ -1,12 +1,14 @@
+import { isDesktop } from '@lobechat/const';
 import { Flexbox, TooltipGroup } from '@lobehub/ui';
-import React, { memo, Suspense, useEffect } from 'react';
+import React, { memo, Suspense, useCallback } from 'react';
 
-import DragUploadZone, { useUploadFiles } from '@/components/DragUploadZone';
+import DragUploadZone, { type DroppedLocalPath, useUploadFiles } from '@/components/DragUploadZone';
 import Loading from '@/components/Loading/BrandTextLoading';
+import { insertLocalPathTags } from '@/features/ChatInput/InputEditor/insertLocalFileTags';
+import { useEffectiveWorkingDirectory } from '@/hooks/useEffectiveWorkingDirectory';
 import { useAgentStore } from '@/store/agent';
-import { agentSelectors } from '@/store/agent/selectors';
-import { useGlobalStore } from '@/store/global';
-import { systemStatusSelectors } from '@/store/global/selectors';
+import { agentChatConfigSelectors, agentSelectors } from '@/store/agent/selectors';
+import { useChatStore } from '@/store/chat';
 
 import ConversationArea from './ConversationArea';
 
@@ -18,21 +20,32 @@ const wrapperStyle: React.CSSProperties = {
 };
 
 const ChatConversation = memo(() => {
-  const isStatusInit = useGlobalStore(systemStatusSelectors.isStatusInit);
-
-  // Get current agent's model info for vision support check
+  const agentId = useAgentStore((s) => s.activeAgentId || '');
   const model = useAgentStore(agentSelectors.currentAgentModel);
   const provider = useAgentStore(agentSelectors.currentAgentModelProvider);
-  const { handleUploadFiles } = useUploadFiles({ model, provider });
+  const isHeterogeneous = useAgentStore(agentSelectors.isCurrentAgentHeterogeneous);
+  const isLocalSystemEnabled = useAgentStore(agentChatConfigSelectors.isLocalSystemEnabled);
 
-  useEffect(() => {
-    if (!isStatusInit) return;
-    useGlobalStore.getState().toggleRightPanel(false);
-  }, [isStatusInit]);
+  const { handleUploadFiles } = useUploadFiles({ agentId, model, provider });
+  const workingDirectory = useEffectiveWorkingDirectory(agentId);
+
+  const enableLocalPathReference =
+    isDesktop && !!workingDirectory && (isHeterogeneous || isLocalSystemEnabled);
+
+  const handleLocalPaths = useCallback((paths: DroppedLocalPath[]) => {
+    const editor = useChatStore.getState().mainInputEditor?.instance;
+    if (!editor) return;
+    insertLocalPathTags(editor, paths);
+  }, []);
 
   return (
     <Suspense fallback={<Loading debugId="Agent > ChatConversation" />}>
-      <DragUploadZone style={wrapperStyle} onUploadFiles={handleUploadFiles}>
+      <DragUploadZone
+        enableLocalPathReference={enableLocalPathReference}
+        style={wrapperStyle}
+        onLocalPaths={enableLocalPathReference ? handleLocalPaths : undefined}
+        onUploadFiles={handleUploadFiles}
+      >
         <Flexbox flex={1} height={'100%'} style={{ minWidth: 0 }}>
           <TooltipGroup>
             <ConversationArea />

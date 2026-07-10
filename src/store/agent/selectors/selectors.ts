@@ -16,15 +16,19 @@ import {
   type MetaData,
   type RuntimeEnvConfig,
 } from '@lobechat/types';
-import { KnowledgeType } from '@lobechat/types';
-import { VoiceList } from '@lobehub/tts';
+import {
+  getActivePluginIds,
+  getDisabledPluginIds,
+  getWorkingDirEffectivePath,
+  KnowledgeType,
+} from '@lobechat/types';
 
 import { DEFAULT_OPENING_QUESTIONS } from '@/features/AgentSetting/store/selectors';
+import { resolveTargetDeviceId } from '@/helpers/agentWorkingDirectory';
 import { globalAgentContextManager } from '@/helpers/GlobalAgentContextManager';
 import { filterToolIds } from '@/helpers/toolFilters';
 
 import { type AgentStoreState } from '../initialState';
-import { getLocalAgentWorkingDirectory } from '../utils/localAgentWorkingDirectoryStorage';
 import { builtinAgentSelectors } from './builtinAgentSelectors';
 
 // ==========   Meta   ============== //
@@ -120,10 +124,29 @@ const currentAgentModelProvider = (s: AgentStoreState) => {
   return config?.provider || DEFAULT_PROVIDER;
 };
 
+/**
+ * Pinned plugin identifiers for the current agent — disabled entries are
+ * excluded. Matches the pre-tri-state semantics where array-membership meant
+ * pinned; consumers that need the disabled set use `getDisabledPluginIds`
+ * directly.
+ */
 const currentAgentPlugins = (s: AgentStoreState) => {
   const config = currentAgentConfig(s);
 
-  return config?.plugins || [];
+  return getActivePluginIds(config?.plugins);
+};
+
+/**
+ * Disabled plugin identifiers for the current agent. Consumers that build a
+ * tool/skill candidate pool (not just the "always whitelisted" rule map)
+ * need this to actually drop a disabled entry from the pool — being absent
+ * from `currentAgentPlugins` alone doesn't stop it from being present (and
+ * explicit-activation-eligible) in an unfiltered manifest source.
+ */
+const currentAgentDisabledPlugins = (s: AgentStoreState) => {
+  const config = currentAgentConfig(s);
+
+  return getDisabledPluginIds(config?.plugins);
 };
 
 /**
@@ -153,28 +176,8 @@ const currentAgentTTS = (s: AgentStoreState): LobeAgentTTSConfig => {
   return config?.tts || DEFAUTT_AGENT_TTS_CONFIG;
 };
 
-const currentAgentTTSVoice =
-  (lang: string) =>
-  (s: AgentStoreState): string => {
-    const { voice, ttsService } = currentAgentTTS(s);
-    const voiceList = new VoiceList(lang);
-    let currentVoice;
-    switch (ttsService) {
-      case 'openai': {
-        currentVoice = voice.openai || (VoiceList.openaiVoiceOptions?.[0].value as string);
-        break;
-      }
-      case 'edge': {
-        currentVoice = voice.edge || (voiceList.edgeVoiceOptions?.[0].value as string);
-        break;
-      }
-      case 'microsoft': {
-        currentVoice = voice.microsoft || (voiceList.microsoftVoiceOptions?.[0].value as string);
-        break;
-      }
-    }
-    return currentVoice || 'alloy';
-  };
+const currentAgentTTSVoice = (s: AgentStoreState): string =>
+  currentAgentTTS(s).voice?.openai || 'alloy';
 
 const currentEnabledKnowledge = (s: AgentStoreState) => {
   const knowledgeBases = currentAgentKnowledgeBases(s);
@@ -228,6 +231,16 @@ const isAgentConfigLoading = (s: AgentStoreState) =>
   !s.activeAgentId || !s.agentMap[s.activeAgentId];
 
 /**
+ * Fetch error for the active agent's config (undefined when none).
+ * Distinguishes "fetch failed" from `isAgentConfigLoading`'s "no data yet",
+ * so failure surfaces a retry UI instead of an endless skeleton.
+ */
+const currentAgentConfigError = (s: AgentStoreState): string | undefined =>
+  s.activeAgentId ? s.agentConfigErrorMap[s.activeAgentId] : undefined;
+
+const isAgentConfigError = (s: AgentStoreState) => !!currentAgentConfigError(s);
+
+/**
  * Get agent's slug by ID (used to identify builtin agents)
  */
 const getAgentSlugById = (agentId: string) => (s: AgentStoreState) => s.agentMap[agentId]?.slug;
@@ -239,18 +252,14 @@ const openingMessage = (s: AgentStoreState) => currentAgentConfig(s)?.openingMes
 // ==========   Agent Mode Config   ============== //
 
 /**
- * Get current agent's mode
- * Now reads from chatConfig.agentMode and chatConfig.enableAgentMode
+ * Get current agent's mode.
+ * Agent mode is the default — only an explicit `chatConfig.enableAgentMode === false`
+ * collapses the agent to chat mode.
  */
 const currentAgentMode = (s: AgentStoreState): AgentMode | undefined => {
   const config = currentAgentConfig(s);
-
-  // Fallback: convert enableAgentMode to mode
-  if (config?.enableAgentMode) {
-    return 'auto';
-  }
-
-  return undefined;
+  const chatConfig = config?.chatConfig;
+  return chatConfig?.enableAgentMode === false ? undefined : 'auto';
 };
 
 /**
@@ -266,20 +275,34 @@ const currentAgentRuntimeEnvConfig = (s: AgentStoreState): RuntimeEnvConfig | un
   currentAgentConfig(s)?.chatConfig?.runtimeEnv;
 
 /**
- * Get current agent's working directory
+ * Get the active agent's agent-level working directory.
+ *
+ * Precedence mirrors `getAgentWorkingDirectoryById` (the agent-owned slice only;
+ * topic overrides are layered on by callers):
+ *
+ *   agent's per-device choice (`agencyConfig.workingDirByDevice[targetDeviceId]`)
+ *     > legacy per-agent localStorage value > home path
+ *
+ * `currentDeviceId` is passed in (not read cross-store) so the target device is
+ * resolved correctly for device-bound agents and hook callers stay reactive.
  */
-const currentAgentWorkingDirectory = (s: AgentStoreState): string | undefined =>
-  (() => {
+const currentAgentWorkingDirectory =
+  (currentDeviceId?: string) =>
+  (s: AgentStoreState): string | undefined => {
     if (!isDesktop) return;
 
+    const homePath = globalAgentContextManager.getContext().homePath;
     const activeAgentId = s.activeAgentId;
-    if (!activeAgentId) return globalAgentContextManager.getContext().homePath;
+    if (!activeAgentId) return homePath;
 
-    return (
-      getLocalAgentWorkingDirectory(activeAgentId) ??
-      globalAgentContextManager.getContext().homePath
-    );
-  })();
+    const agencyConfig = currentAgentConfig(s)?.agencyConfig;
+    const targetDeviceId = resolveTargetDeviceId(agencyConfig, currentDeviceId);
+    const agentChoice = targetDeviceId
+      ? getWorkingDirEffectivePath(agencyConfig?.workingDirByDevice?.[targetDeviceId])
+      : undefined;
+
+    return agentChoice ?? s.localAgentWorkingDirectoryMap[activeAgentId] ?? homePath;
+  };
 
 const isCurrentAgentExternal = (s: AgentStoreState): boolean => !currentAgentData(s)?.virtual;
 
@@ -294,20 +317,26 @@ const isCurrentAgentHeterogeneous = (s: AgentStoreState): boolean =>
 const currentAgentHeterogeneousProviderType = (s: AgentStoreState) =>
   currentAgentConfig(s)?.agencyConfig?.heterogeneousProvider?.type;
 
+const currentAgentExecutionTarget = (s: AgentStoreState) =>
+  currentAgentConfig(s)?.agencyConfig?.executionTarget;
+
 const getAgentDocumentsById = (agentId: string) => (s: AgentStoreState) =>
   s.agentDocumentsMap[agentId];
 
 export const agentSelectors = {
+  currentAgentExecutionTarget,
   currentAgentHeterogeneousProviderType,
   currentAgentAvatar,
   currentAgentBackgroundColor,
   currentAgentConfig,
+  currentAgentConfigError,
   currentAgentDescription,
   currentAgentFiles,
   currentAgentKnowledgeBases,
   currentAgentRuntimeEnvConfig,
   currentAgentMeta,
   currentAgentMode,
+  currentAgentDisabledPlugins,
   currentAgentModel,
   currentAgentModelProvider,
   currentAgentPlugins,
@@ -330,6 +359,7 @@ export const agentSelectors = {
   hasSystemRole,
   inboxAgentConfig,
   inboxAgentModel,
+  isAgentConfigError,
   isAgentConfigLoading,
   isAgentModeEnabled,
   isCurrentAgentExternal,

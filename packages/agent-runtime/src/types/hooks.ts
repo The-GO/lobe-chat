@@ -30,9 +30,30 @@ export type AgentHookType =
 /**
  * Unified event payload passed to hook handlers and webhook payloads
  */
+/**
+ * Outbound attachment carried alongside the agent's final reply text.
+ * Populated only on `onComplete`. JSON-safe so it survives webhook delivery.
+ */
+export interface HookEventAttachment {
+  /** Base64-encoded bytes. Used when no fetchable URL exists. */
+  data?: string;
+  /** Remote URL the downstream consumer can GET to retrieve the bytes. */
+  fetchUrl?: string;
+  mimeType?: string;
+  name?: string;
+  type: 'image' | 'file' | 'video' | 'audio';
+}
+
 export interface AgentHookEvent {
   // Identification
   agentId: string;
+  /**
+   * Outbound attachments extracted from the final assistant message's
+   * multimodal `content` parts (or tool messages that produced image/file
+   * outputs). Set on `onComplete` events; downstream consumers (bot reply
+   * callbacks) forward these to platform messengers.
+   */
+  attachments?: HookEventAttachment[];
   /** LLM text output (afterStep only) */
   content?: string;
   // Statistics
@@ -40,6 +61,13 @@ export interface AgentHookEvent {
   duration?: number;
   /** Elapsed time since operation started in ms (afterStep only) */
   elapsedMs?: number;
+  /**
+   * Error ownership from the model-runtime error taxonomy (`who should fix it`):
+   * `user` | `provider` | `harness` | `system`. Lets consumers pick a
+   * user-facing message tier (and decide whether to keep the Operation ID
+   * prominent) without re-deriving the error spec themselves.
+   */
+  errorAttribution?: string;
   // Content
   errorDetail?: string;
 

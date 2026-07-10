@@ -1,5 +1,6 @@
 import { SkillsIcon } from '@lobehub/ui/icons';
 import {
+  Blocks,
   Brain,
   BrainCircuit,
   ChartColumnBigIcon,
@@ -18,9 +19,9 @@ import {
 } from 'lucide-react';
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router-dom';
 
 import { type CellProps } from '@/components/Cell';
+import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
 import { SettingsTabs } from '@/store/global/initialState';
 import {
   featureFlagsSelectors,
@@ -48,9 +49,9 @@ export interface CategoryGroup {
 }
 
 export const useCategory = (): CategoryGroup[] => {
-  const navigate = useNavigate();
+  const navigate = useWorkspaceAwareNavigate();
   const { t } = useTranslation(['setting', 'auth', 'subscription']);
-  const { hideDocs, showApiKeyManage } = useServerConfigStore(featureFlagsSelectors);
+  const { hideDocs, showApiKeyManage, showProvider } = useServerConfigStore(featureFlagsSelectors);
   const enableBusinessFeatures = useServerConfigStore(serverConfigSelectors.enableBusinessFeatures);
   const isDevMode = useUserStore((s) => userGeneralSettingsSelectors.config(s).isDevMode);
 
@@ -100,7 +101,9 @@ export const useCategory = (): CategoryGroup[] => {
       : [];
 
     const agent: CategoryItem[] = [
-      (!enableBusinessFeatures || isDevMode) &&
+      // Provider settings should not depend on Advanced tools: new users may need
+      // non-LobeHub providers, and desktop users often bring their own API keys.
+      showProvider &&
         makeItem({ icon: Brain, key: SettingsTabs.Provider, label: t('setting:tab.provider') }),
       makeItem({
         icon: Sparkles,
@@ -108,6 +111,7 @@ export const useCategory = (): CategoryGroup[] => {
         label: t('setting:tab.serviceModel'),
       }),
       makeItem({ icon: SkillsIcon, key: SettingsTabs.Skill, label: t('setting:tab.skill') }),
+      makeItem({ icon: Blocks, key: SettingsTabs.Connector, label: t('setting:tab.connector') }),
       makeItem({ icon: BrainCircuit, key: SettingsTabs.Memory, label: t('setting:tab.memory') }),
       makeItem({ icon: KeyRound, key: SettingsTabs.Creds, label: t('setting:tab.creds') }),
       showApiKeyManage &&
@@ -136,5 +140,5 @@ export const useCategory = (): CategoryGroup[] => {
       { items: agent, key: SettingsGroupKey.Agent, title: t('setting:group.aiConfig') },
       { items: system, key: SettingsGroupKey.System, title: t('setting:group.system') },
     ].filter((group) => group.items.length > 0);
-  }, [t, enableBusinessFeatures, hideDocs, showApiKeyManage, isDevMode, navigate]);
+  }, [t, enableBusinessFeatures, hideDocs, showApiKeyManage, showProvider, isDevMode, navigate]);
 };

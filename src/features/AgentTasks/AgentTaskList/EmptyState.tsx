@@ -6,14 +6,15 @@ import { RefreshCw } from 'lucide-react';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { BriefCardSkeleton } from '@/features/DailyBrief/BriefCardSkeleton';
 import { TaskTemplateCard } from '@/features/RecommendTaskTemplates/TaskTemplateCard';
+import { TaskTemplateCardSkeleton } from '@/features/RecommendTaskTemplates/TaskTemplateCardSkeleton';
 import { useDailyBriefRecommendationsUI } from '@/features/RecommendTaskTemplates/useDailyBriefRecommendationsUI';
 import WideScreenContainer from '@/features/WideScreenContainer';
 
 import CreateTaskInlineEntry from './CreateTaskInlineEntry';
 
-const HERO_MAX_WIDTH = 720;
+const HERO_MAX_WIDTH = 960;
+const EMPTY_STATE_RECOMMEND_COUNT = 10;
 
 const styles = createStaticStyles(({ css }) => ({
   grid: css`
@@ -27,10 +28,15 @@ const styles = createStaticStyles(({ css }) => ({
   `,
 }));
 
-const EmptyState = memo(() => {
+interface EmptyStateProps {
+  /** When set, scopes task creation to this agent and locks the assignee. */
+  agentId?: string;
+}
+
+const EmptyState = memo<EmptyStateProps>(({ agentId }) => {
   const { t } = useTranslation('chat');
-  const { t: tTaskTemplate } = useTranslation('taskTemplate');
-  const templatesState = useDailyBriefRecommendationsUI({ count: 10 });
+  const { t: tCommon } = useTranslation('common');
+  const templatesState = useDailyBriefRecommendationsUI({ count: EMPTY_STATE_RECOMMEND_COUNT });
 
   return (
     <WideScreenContainer
@@ -48,7 +54,7 @@ const EmptyState = memo(() => {
         </Text>
       </Flexbox>
 
-      <CreateTaskInlineEntry variant={'hero'} />
+      <CreateTaskInlineEntry agentId={agentId} lockAssignee={!!agentId} variant={'hero'} />
 
       {templatesState.mode !== 'hidden' && (
         <Flexbox gap={12}>
@@ -65,13 +71,18 @@ const EmptyState = memo(() => {
                 onClick={templatesState.onRefresh}
               >
                 <Icon icon={RefreshCw} size={12} />
-                <Text fontSize={12}>{tTaskTemplate('action.refresh.button')}</Text>
+                <Text fontSize={12}>{tCommon('taskTemplate.action.refresh.button')}</Text>
               </Flexbox>
             )}
           </Flexbox>
           <div className={styles.grid}>
             {templatesState.mode === 'skeleton'
-              ? Array.from({ length: 6 }).map((_, i) => <BriefCardSkeleton key={i} />)
+              ? Array.from({ length: templatesState.skeletonCount }).map((_, i) => (
+                  <TaskTemplateCardSkeleton
+                    descriptionRows={2}
+                    key={`task-template-skeleton-${i}`}
+                  />
+                ))
               : templatesState.templates.map((tmpl) => (
                   <TaskTemplateCard
                     key={tmpl.id}

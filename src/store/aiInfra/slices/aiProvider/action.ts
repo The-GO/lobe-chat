@@ -5,8 +5,7 @@ import {
 } from '@lobechat/model-runtime';
 import { uniqBy } from 'es-toolkit/compat';
 import type {
-  AIImageModelCard,
-  AIVideoModelCard,
+  AiFullModelCard,
   EnabledAiModel,
   LobeDefaultAiModelListItem,
   ModelAbilities,
@@ -43,6 +42,7 @@ export type ProviderModelListItem = {
   description?: string;
   displayName: string;
   id: string;
+  knowledgeCutoff?: string;
   parameters?: ModelParamsSchema;
   pricePerImage?: number;
   pricePerVideo?: number;
@@ -51,6 +51,16 @@ export type ProviderModelListItem = {
 };
 
 type ModelNormalizer = (model: EnabledAiModel) => Promise<ProviderModelListItem>;
+
+const getModelProperty = async <T>(
+  model: EnabledAiModel,
+  propertyName: keyof AiFullModelCard,
+): Promise<T | undefined> => {
+  const inlineValue = (model as Partial<AiFullModelCard>)[propertyName];
+  if (inlineValue !== undefined) return inlineValue as T;
+
+  return getModelPropertyWithFallback<T | undefined>(model.id, propertyName, model.providerId);
+};
 
 const dedupeById = (models: ProviderModelListItem[]) => uniqBy(models, 'id');
 
@@ -71,9 +81,10 @@ const createProviderModelCollector = (
 };
 
 export const normalizeChatModel = async (model: EnabledAiModel): Promise<ProviderModelListItem> => {
-  const [description, pricing] = await Promise.all([
-    getModelPropertyWithFallback<string | undefined>(model.id, 'description', model.providerId),
-    getModelPropertyWithFallback<Pricing | undefined>(model.id, 'pricing', model.providerId),
+  const [description, knowledgeCutoff, pricing] = await Promise.all([
+    getModelProperty<string>(model, 'description'),
+    getModelProperty<string>(model, 'knowledgeCutoff'),
+    getModelProperty<Pricing>(model, 'pricing'),
   ]);
 
   return {
@@ -83,6 +94,40 @@ export const normalizeChatModel = async (model: EnabledAiModel): Promise<Provide
     id: model.id,
     releasedAt: model.releasedAt,
     ...(description && { description }),
+    ...(knowledgeCutoff && { knowledgeCutoff }),
+    ...(pricing && { pricing }),
+  };
+};
+
+/**
+ * Normalizes an enabled embedding model for provider model selectors.
+ *
+ * Use when:
+ * - Building model assignment dropdown options for embedding-specific tasks
+ *
+ * Expects:
+ * - A visible enabled model with `type: "embedding"` from model-bank/runtime state
+ *
+ * Returns:
+ * - A provider-list item compatible with {@link EnabledProviderWithModels}
+ */
+export const normalizeEmbeddingModel = async (
+  model: EnabledAiModel,
+): Promise<ProviderModelListItem> => {
+  const [description, knowledgeCutoff, pricing] = await Promise.all([
+    getModelProperty<string>(model, 'description'),
+    getModelProperty<string>(model, 'knowledgeCutoff'),
+    getModelProperty<Pricing>(model, 'pricing'),
+  ]);
+
+  return {
+    abilities: (model.abilities || {}) as ModelAbilities,
+    contextWindowTokens: model.contextWindowTokens,
+    displayName: model.displayName ?? '',
+    id: model.id,
+    releasedAt: model.releasedAt,
+    ...(description && { description }),
+    ...(knowledgeCutoff && { knowledgeCutoff }),
     ...(pricing && { pricing }),
   };
 };
@@ -98,16 +143,8 @@ export const normalizeImageModel = async (
         model.providerId,
       );
 
-  const modelWithPricing = model as AIImageModelCard;
-  const fallbackPricingPromise = modelWithPricing.pricing
-    ? Promise.resolve<Pricing | undefined>(modelWithPricing.pricing)
-    : getModelPropertyWithFallback<Pricing | undefined>(model.id, 'pricing', model.providerId);
-
-  const fallbackDescriptionPromise = getModelPropertyWithFallback<string | undefined>(
-    model.id,
-    'description',
-    model.providerId,
-  );
+  const fallbackPricingPromise = getModelProperty<Pricing>(model, 'pricing');
+  const fallbackDescriptionPromise = getModelProperty<string>(model, 'description');
 
   const [fallbackParameters, fallbackPricing, fallbackDescription] = await Promise.all([
     fallbackParametersPromise,
@@ -145,16 +182,8 @@ export const normalizeVideoModel = async (
         model.providerId,
       );
 
-  const modelWithPricing = model as AIVideoModelCard;
-  const fallbackPricingPromise = modelWithPricing.pricing
-    ? Promise.resolve<Pricing | undefined>(modelWithPricing.pricing)
-    : getModelPropertyWithFallback<Pricing | undefined>(model.id, 'pricing', model.providerId);
-
-  const fallbackDescriptionPromise = getModelPropertyWithFallback<string | undefined>(
-    model.id,
-    'description',
-    model.providerId,
-  );
+  const fallbackPricingPromise = getModelProperty<Pricing>(model, 'pricing');
+  const fallbackDescriptionPromise = getModelProperty<string>(model, 'description');
 
   const [fallbackParameters, fallbackPricing, fallbackDescription] = await Promise.all([
     fallbackParametersPromise,
@@ -182,6 +211,11 @@ export const normalizeVideoModel = async (
 
 export const getChatModelList = createProviderModelCollector('chat', async (model) =>
   normalizeChatModel(model),
+);
+
+export const getEmbeddingModelList = createProviderModelCollector(
+  'embedding',
+  normalizeEmbeddingModel,
 );
 
 export const getImageModelList = createProviderModelCollector('image', normalizeImageModel);
@@ -222,6 +256,14 @@ const buildChatProviderModelLists = async (
 ) => buildProviderModelLists(providers, enabledAiModels, getChatModelList);
 
 /**
+ * Build embedding provider model lists with proper async handling
+ */
+const buildEmbeddingProviderModelLists = async (
+  providers: EnabledProvider[],
+  enabledAiModels: EnabledAiModel[],
+) => buildProviderModelLists(providers, enabledAiModels, getEmbeddingModelList);
+
+/**
  * Build video provider model lists with proper async handling
  */
 const buildVideoProviderModelLists = async (
@@ -238,6 +280,7 @@ enum AiProviderSwrKey {
 type AiProviderRuntimeStateWithBuiltinModels = AiProviderRuntimeState & {
   builtinAiModelList: LobeDefaultAiModelListItem[];
   enabledChatModelList?: EnabledProviderWithModels[];
+  enabledEmbeddingModelList?: EnabledProviderWithModels[];
   enabledImageModelList?: EnabledProviderWithModels[];
   enabledVideoModelList?: EnabledProviderWithModels[];
 };
@@ -308,6 +351,29 @@ export class AiProviderActionImpl {
     await Promise.all([
       mutate([AiProviderSwrKey.fetchAiProviderRuntimeState, true]),
       mutate([AiProviderSwrKey.fetchAiProviderRuntimeState, false]),
+    ]);
+  };
+
+  /**
+   * Resolve once the aiProvider runtime-state (the enabled-model list + model
+   * abilities) has loaded, so callers can decide function-calling / tool
+   * capability from *real* data instead of guessing while it's still hydrating.
+   *
+   * No-op when already loaded. Otherwise it triggers/awaits the (usually already
+   * in-flight) fetch, bounded by `timeoutMs` so a slow or blocked request — e.g.
+   * one still gated behind an unresolved auth session — never holds up the
+   * caller indefinitely; it then proceeds on whatever state is available.
+   */
+  ensureAiProviderRuntimeStateReady = async (timeoutMs = 3000): Promise<void> => {
+    if (this.#get().isInitAiProviderRuntimeState) return;
+
+    await Promise.race([
+      this.#get()
+        .refreshAiProviderRuntimeState()
+        .catch(() => undefined),
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, timeoutMs);
+      }),
     ]);
   };
 
@@ -438,15 +504,11 @@ export class AiProviderActionImpl {
     );
   };
 
-  useFetchAiProviderList = (opts?: {
-    enabled?: boolean;
-    suspense?: boolean;
-  }): SWRResponse<AiProviderListItem[]> => {
+  useFetchAiProviderList = (opts?: { enabled?: boolean }): SWRResponse<AiProviderListItem[]> => {
     return useClientDataSWR<AiProviderListItem[]>(
       opts?.enabled === false ? null : AiProviderSwrKey.fetchAiProviderList,
       () => aiProviderService.getAiProviderList(),
       {
-        fallbackData: [],
         onSuccess: (data) => {
           if (!this.#get().initAiProviderList) {
             this.#set(
@@ -477,23 +539,39 @@ export class AiProviderActionImpl {
     return useClientDataSWR<AiProviderRuntimeStateWithBuiltinModels | undefined>(
       shouldFetch ? [AiProviderSwrKey.fetchAiProviderRuntimeState, isLogin] : null,
       async ([, isLogin]) => {
-        const [{ LOBE_DEFAULT_MODEL_LIST: builtinAiModelList }, { DEFAULT_MODEL_PROVIDER_LIST }] =
-          await Promise.all([import('model-bank'), import('model-bank/modelProviders')]);
+        const [{ loadModels }, { DEFAULT_MODEL_PROVIDER_LIST }] = await Promise.all([
+          import('@/business/client/model-bank/loadModels'),
+          import('model-bank/modelProviders'),
+        ]);
+        const builtinAiModelList = await loadModels();
 
         if (isLogin) {
           const data = await aiProviderService.getAiProviderRuntimeState();
+
+          const enabledEmbeddingAiProviders = data.enabledAiProviders.filter((provider) => {
+            return data.enabledAiModels.some(
+              (model) => model.providerId === provider.id && model.type === 'embedding',
+            );
+          });
+
           // Build model lists with proper async handling
-          const [enabledChatModelList, enabledImageModelList, enabledVideoModelList] =
-            await Promise.all([
-              buildChatProviderModelLists(data.enabledChatAiProviders, data.enabledAiModels),
-              buildImageProviderModelLists(data.enabledImageAiProviders, data.enabledAiModels),
-              buildVideoProviderModelLists(data.enabledVideoAiProviders, data.enabledAiModels),
-            ]);
+          const [
+            enabledChatModelList,
+            enabledEmbeddingModelList,
+            enabledImageModelList,
+            enabledVideoModelList,
+          ] = await Promise.all([
+            buildChatProviderModelLists(data.enabledChatAiProviders, data.enabledAiModels),
+            buildEmbeddingProviderModelLists(enabledEmbeddingAiProviders, data.enabledAiModels),
+            buildImageProviderModelLists(data.enabledImageAiProviders, data.enabledAiModels),
+            buildVideoProviderModelLists(data.enabledVideoAiProviders, data.enabledAiModels),
+          ]);
 
           return {
             ...data,
             builtinAiModelList,
             enabledChatModelList,
+            enabledEmbeddingModelList,
             enabledImageModelList,
             enabledVideoModelList,
           };
@@ -525,14 +603,27 @@ export class AiProviderActionImpl {
           })
           .map((item) => ({ id: item.id, name: item.name, source: AiProviderSourceEnum.Builtin }));
 
+        const enabledEmbeddingAiProviders = enabledAiProviders
+          .filter((provider) => {
+            return builtinAiModelList.some(
+              (model) => model.providerId === provider.id && model.type === 'embedding',
+            );
+          })
+          .map((item) => ({ id: item.id, name: item.name, source: AiProviderSourceEnum.Builtin }));
+
         // Build model lists for non-login state as well
         const enabledAiModels = builtinAiModelList.filter((m) => m.enabled);
-        const [enabledChatModelList, enabledImageModelList, enabledVideoModelList] =
-          await Promise.all([
-            buildChatProviderModelLists(enabledChatAiProviders, enabledAiModels),
-            buildImageProviderModelLists(enabledImageAiProviders, enabledAiModels),
-            buildVideoProviderModelLists(enabledVideoAiProviders, enabledAiModels),
-          ]);
+        const [
+          enabledChatModelList,
+          enabledEmbeddingModelList,
+          enabledImageModelList,
+          enabledVideoModelList,
+        ] = await Promise.all([
+          buildChatProviderModelLists(enabledChatAiProviders, enabledAiModels),
+          buildEmbeddingProviderModelLists(enabledEmbeddingAiProviders, enabledAiModels),
+          buildImageProviderModelLists(enabledImageAiProviders, enabledAiModels),
+          buildVideoProviderModelLists(enabledVideoAiProviders, enabledAiModels),
+        ]);
 
         return {
           builtinAiModelList,
@@ -540,6 +631,7 @@ export class AiProviderActionImpl {
           enabledAiProviders,
           enabledChatAiProviders,
           enabledChatModelList,
+          enabledEmbeddingModelList,
           enabledImageAiProviders,
           enabledImageModelList,
           enabledVideoAiProviders,
@@ -558,6 +650,7 @@ export class AiProviderActionImpl {
               enabledAiModels: data.enabledAiModels,
               enabledAiProviders: data.enabledAiProviders,
               enabledChatModelList: data.enabledChatModelList || [],
+              enabledEmbeddingModelList: data.enabledEmbeddingModelList || [],
               enabledImageModelList: data.enabledImageModelList || [],
               enabledVideoModelList: data.enabledVideoModelList || [],
               isInitAiProviderRuntimeState: true,

@@ -13,8 +13,12 @@ export const DEFAULT_PREFERENCE: UserPreference = {
     topic: true,
   },
   lab: {
+    enableAgentGraphConfig: false,
     enableAgentSelfIteration: false,
+    enableFleet: false,
     enableInputMarkdown: true,
+    enableMessageTextSelectionActions: false,
+    enablePlatformAgent: false,
   },
   topicGroupMode: 'byTime',
   topicIncludeCompleted: false,

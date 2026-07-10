@@ -1,7 +1,7 @@
 import { AGENT_ONBOARDING_ENABLED } from '@lobechat/business-const';
 import { isDesktop } from '@lobechat/const';
 import { memo } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate } from 'react-router';
 
 import Loading from '@/components/Loading/BrandTextLoading';
 import AgentOnboardingPage from '@/features/Onboarding/Agent';
@@ -23,12 +23,12 @@ const AgentOnboardingRoute = memo(() => {
 
   if (!serverConfigInit || !isUserStateInit) return <Loading debugId="AgentOnboardingRoute" />;
 
-  if (!enableAgentOnboarding) {
-    return <Navigate replace to="/onboarding/classic" />;
-  }
-
   if (!commonStepsCompleted) {
     return <Navigate replace to="/onboarding" />;
+  }
+
+  if (!enableAgentOnboarding) {
+    return <Navigate replace to="/onboarding/classic" />;
   }
 
   return <AgentOnboardingPage />;

@@ -714,7 +714,7 @@ describe('ToolNameResolver', () => {
       expect(result).toEqual([]);
     });
 
-    // Regression for LOBE-8696: some models (e.g. deepseek-v4-pro) drop the
+    // Regression for some models (e.g. deepseek-v4-pro) drop the
     // `<identifier>____` prefix and emit only the bare API name. When that
     // bare name uniquely matches an API in the available manifests, we should
     // recover the identifier from the manifest instead of silently dropping
@@ -893,6 +893,32 @@ describe('ToolNameResolver', () => {
 
         // Manifest exists but the tool was not sent to the LLM this turn.
         const result = resolver.resolve(toolCalls, manifests, ['lobe-skills____activateSkill']);
+
+        expect(result).toEqual([]);
+      });
+
+      it('should drop fully-qualified tool names that were not offered this turn', () => {
+        const toolCalls = [
+          {
+            function: { arguments: '{}', name: 'workspace____write' },
+            id: 'call_1',
+            type: 'function',
+          },
+        ];
+
+        const manifests = {
+          workspace: {
+            api: [
+              { description: '', name: 'read', parameters: {} },
+              { description: '', name: 'write', parameters: {} },
+            ],
+            identifier: 'workspace',
+            meta: {},
+            type: 'builtin' as const,
+          },
+        };
+
+        const result = resolver.resolve(toolCalls, manifests, ['workspace____read']);
 
         expect(result).toEqual([]);
       });

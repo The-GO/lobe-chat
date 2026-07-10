@@ -1,10 +1,16 @@
 'use client';
 
+import { Alert, Flexbox } from '@lobehub/ui';
+import { Button, confirmModal } from '@lobehub/ui/base-ui';
 import { App, Form } from 'antd';
 import { createStaticStyles } from 'antd-style';
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { ExternalLink } from 'lucide-react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { useActiveWorkspaceId } from '@/business/client/hooks/useActiveWorkspaceId';
+import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
+import { usePermission } from '@/hooks/usePermission';
 import type { SerializedPlatformDefinition } from '@/server/services/bot/platforms/types';
 import { agentBotProviderService } from '@/services/agentBotProvider';
 import { useAgentStore } from '@/store/agent';
@@ -18,6 +24,7 @@ import Body from './Body';
 import Footer from './Footer';
 import { getChannelFormValues, mergeSettingsWithDefaults } from './formState';
 import Header from './Header';
+import { type ChannelPostSave, ChannelPostSaveContext } from './postSaveContext';
 
 const styles = createStaticStyles(({ css, cssVar }) => ({
   main: css`
@@ -62,15 +69,28 @@ export interface TestResult {
 interface PlatformDetailProps {
   agentId: string;
   currentConfig?: CurrentConfig;
+  disabled?: boolean;
   platformDef: SerializedPlatformDefinition;
   runtimeStatus?: BotRuntimeStatus;
 }
 
 const PlatformDetail = memo<PlatformDetailProps>(
-  ({ platformDef, agentId, currentConfig, runtimeStatus }) => {
+  ({ platformDef, agentId, currentConfig, disabled, runtimeStatus }) => {
     const { t } = useTranslation('agent');
-    const { message: msg, modal } = App.useApp();
+    const navigate = useWorkspaceAwareNavigate();
+    const { message: msg } = App.useApp();
     const [form] = Form.useForm<ChannelFormValues>();
+    const { allowed: canEdit } = usePermission('edit_own_content');
+    const activeWorkspaceId = useActiveWorkspaceId();
+    const readOnly = disabled || !canEdit;
+    const paidFeatureBlocked =
+      platformDef.access?.requiredPlan === 'paid' && platformDef.access.allowed === false;
+    const paidFeatureMode = platformDef.access?.rolloutMode ?? 'enforce';
+    const paidFeatureScope = activeWorkspaceId ? 'workspace' : 'personal';
+    const writeDisabled = readOnly || paidFeatureBlocked;
+    // The server allows disable-only updates on paid-blocked channels, so an
+    // already-enabled channel can still be turned off (but not re-enabled).
+    const toggleDisabled = readOnly || (paidFeatureBlocked && !currentConfig?.enabled);
 
     const [
       createBotProvider,
@@ -101,6 +121,19 @@ const PlatformDetail = memo<PlatformDetailProps>(
     );
     const [refreshingStatus, setRefreshingStatus] = useState(false);
     const connectPollingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    // Platform-specific extras (e.g. iMessage's BlueBubbles bridge) register a
+    // side-effect here so it runs as part of the single "Save Configuration"
+    // click instead of a separate button.
+    const postSaveRef = useRef<ChannelPostSave | null>(null);
+    const postSaveRegistry = useMemo(
+      () => ({
+        register: (fn: ChannelPostSave | null) => {
+          postSaveRef.current = fn;
+        },
+      }),
+      [],
+    );
 
     const stopConnectPolling = useCallback(() => {
       if (!connectPollingTimerRef.current) return;
@@ -197,6 +230,7 @@ const PlatformDetail = memo<PlatformDetailProps>(
     );
 
     const handleRefreshStatus = useCallback(async () => {
+      if (writeDisabled) return;
       if (!currentConfig?.enabled) return;
       setRefreshingStatus(true);
       try {
@@ -217,7 +251,14 @@ const PlatformDetail = memo<PlatformDetailProps>(
       } finally {
         setRefreshingStatus(false);
       }
-    }, [agentId, currentConfig, mapRuntimeStatusToResult, msg, refreshBotRuntimeStatus]);
+    }, [
+      agentId,
+      writeDisabled,
+      currentConfig,
+      mapRuntimeStatusToResult,
+      msg,
+      refreshBotRuntimeStatus,
+    ]);
 
     // Reset form and status when switching platforms. Must NOT depend on
     // runtimeStatus — otherwise background status refreshes would wipe
@@ -277,6 +318,8 @@ const PlatformDetail = memo<PlatformDetailProps>(
     }, [currentConfig, stopConnectPolling, syncRuntimeStatus]);
 
     const handleSave = useCallback(async () => {
+      if (writeDisabled) return;
+
       try {
         await form.validateFields();
         const values = form.getFieldsValue(true) as ChannelFormValues;
@@ -324,6 +367,10 @@ const PlatformDetail = memo<PlatformDetailProps>(
           });
         }
 
+        // Run any platform-specific post-save side-effect (e.g. iMessage's
+        // local BlueBubbles bridge) as part of the same save.
+        await postSaveRef.current?.({ applicationId });
+
         setSaveResult({ type: 'success' });
         setTimeout(() => setSaveResult(undefined), 3000);
         setSaving(false);
@@ -344,10 +391,13 @@ const PlatformDetail = memo<PlatformDetailProps>(
       createBotProvider,
       updateBotProvider,
       connectCurrentBot,
+      writeDisabled,
     ]);
 
     const handleExternalAuth = useCallback(
       async (params: { applicationId: string; credentials: Record<string, string> }) => {
+        if (writeDisabled) return;
+
         setSaving(true);
         setSaveResult(undefined);
         setConnectResult(undefined);
@@ -394,15 +444,17 @@ const PlatformDetail = memo<PlatformDetailProps>(
         createBotProvider,
         updateBotProvider,
         connectCurrentBot,
+        writeDisabled,
         msg,
         t,
       ],
     );
 
     const handleDelete = useCallback(async () => {
+      if (readOnly) return;
       if (!currentConfig) return;
 
-      modal.confirm({
+      confirmModal({
         content: t('channel.deleteConfirmDesc'),
         okButtonProps: { danger: true },
         onOk: async () => {
@@ -416,10 +468,11 @@ const PlatformDetail = memo<PlatformDetailProps>(
         },
         title: t('channel.deleteConfirm'),
       });
-    }, [currentConfig, agentId, deleteBotProvider, msg, t, modal, form]);
+    }, [readOnly, currentConfig, agentId, deleteBotProvider, msg, t, form]);
 
     const handleToggleEnable = useCallback(
       async (enabled: boolean) => {
+        if (enabled ? writeDisabled : readOnly) return;
         if (!currentConfig) return;
         try {
           setPendingEnabled(enabled);
@@ -435,10 +488,20 @@ const PlatformDetail = memo<PlatformDetailProps>(
           msg.error(t('channel.updateFailed'));
         }
       },
-      [currentConfig, agentId, updateBotProvider, connectCurrentBot, msg, t],
+      [
+        writeDisabled,
+        readOnly,
+        currentConfig,
+        agentId,
+        updateBotProvider,
+        connectCurrentBot,
+        msg,
+        t,
+      ],
     );
 
     const handleTestConnection = useCallback(async () => {
+      if (writeDisabled) return;
       if (!currentConfig) {
         msg.warning(t('channel.saveFirstWarning'));
         return;
@@ -460,44 +523,82 @@ const PlatformDetail = memo<PlatformDetailProps>(
       } finally {
         setTesting(false);
       }
-    }, [currentConfig, platformDef.id, testConnection, msg, t]);
+    }, [writeDisabled, currentConfig, platformDef.id, testConnection, msg, t]);
+
+    const handlePaidFeatureUpgrade = useCallback(() => {
+      navigate('/settings/plans');
+    }, [navigate]);
 
     return (
-      <main className={styles.main}>
-        <Header
-          currentConfig={currentConfig}
-          enabledValue={pendingEnabled}
-          platformDef={platformDef}
-          refreshingStatus={refreshingStatus}
-          runtimeStatus={observedStatus}
-          toggleLoading={toggleLoading}
-          onRefreshStatus={handleRefreshStatus}
-          onToggleEnable={handleToggleEnable}
-        />
-        <Body
-          currentConfig={currentConfig}
-          form={form}
-          hasConfig={!!currentConfig}
-          platformDef={platformDef}
-          onAuthenticated={handleExternalAuth}
-        />
-        <Footer
-          connectResult={connectResult}
-          connecting={connecting}
-          currentConfig={currentConfig}
-          form={form}
-          hasConfig={!!currentConfig}
-          platformDef={platformDef}
-          saveResult={saveResult}
-          saving={saving}
-          testResult={testResult}
-          testing={testing}
-          onCopied={() => msg.success(t('channel.copied'))}
-          onDelete={handleDelete}
-          onSave={handleSave}
-          onTestConnection={handleTestConnection}
-        />
-      </main>
+      <ChannelPostSaveContext value={postSaveRegistry}>
+        <main className={styles.main}>
+          <Header
+            currentConfig={currentConfig}
+            disabled={writeDisabled}
+            enabledValue={pendingEnabled}
+            platformDef={platformDef}
+            refreshingStatus={refreshingStatus}
+            runtimeStatus={observedStatus}
+            toggleDisabled={toggleDisabled}
+            toggleLoading={toggleLoading}
+            onRefreshStatus={handleRefreshStatus}
+            onToggleEnable={handleToggleEnable}
+          />
+          {paidFeatureBlocked && (
+            <Alert
+              showIcon
+              style={{ marginBlockStart: 16, maxWidth: 1024, width: '100%' }}
+              type={paidFeatureMode === 'notice' ? 'warning' : 'info'}
+              description={t(`channel.paidFeature.${paidFeatureMode}.desc.${paidFeatureScope}`, {
+                name: platformDef.name,
+              })}
+              message={
+                <Flexbox horizontal align={'center'} gap={12} justify={'space-between'}>
+                  <span>
+                    {t(`channel.paidFeature.${paidFeatureMode}.title`, {
+                      name: platformDef.name,
+                    })}
+                  </span>
+                  <Button
+                    icon={<ExternalLink size={14} />}
+                    size={'small'}
+                    type={'primary'}
+                    onClick={handlePaidFeatureUpgrade}
+                  >
+                    {t(`channel.paidFeature.cta.${paidFeatureScope}`)}
+                  </Button>
+                </Flexbox>
+              }
+            />
+          )}
+          <Body
+            currentConfig={currentConfig}
+            disabled={writeDisabled}
+            form={form}
+            hasConfig={!!currentConfig}
+            platformDef={platformDef}
+            onAuthenticated={handleExternalAuth}
+          />
+          <Footer
+            connectResult={connectResult}
+            connecting={connecting}
+            currentConfig={currentConfig}
+            disabled={readOnly}
+            form={form}
+            hasConfig={!!currentConfig}
+            platformDef={platformDef}
+            saveResult={saveResult}
+            saving={saving}
+            testResult={testResult}
+            testing={testing}
+            writeDisabled={writeDisabled}
+            onCopied={() => msg.success(t('channel.copied'))}
+            onDelete={handleDelete}
+            onSave={handleSave}
+            onTestConnection={handleTestConnection}
+          />
+        </main>
+      </ChannelPostSaveContext>
     );
   },
 );

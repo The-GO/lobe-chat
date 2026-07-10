@@ -21,14 +21,15 @@ export const claudeCodeDriver: HeterogeneousAgentDriver = {
     mcpConfigPath,
     prompt,
     resumeSessionId,
+    systemContext,
   }: HeterogeneousAgentBuildPlanParams) {
-    const stdinPayload = await helpers.buildClaudeStreamJsonInput(prompt, imageList);
+    const stdinPayload = await helpers.buildClaudeStreamJsonInput(prompt, imageList, systemContext);
 
     return {
       args: [
         ...DESKTOP_CLAUDE_CODE_ARGS,
         // Wire the controller-managed temp mcp.json (AskUserQuestion server,
-        // see LOBE-8725) when present. Path-based config is required — CC
+        // see ) when present. Path-based config is required — CC
         // does not accept inline JSON for `--mcp-config`.
         ...(mcpConfigPath ? ['--mcp-config', mcpConfigPath] : []),
         ...(resumeSessionId ? ['--resume', resumeSessionId] : []),

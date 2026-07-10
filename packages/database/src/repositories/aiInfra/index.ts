@@ -1,4 +1,5 @@
 import { BRANDING_PROVIDER } from '@lobechat/business-const';
+import { loadModels } from '@lobechat/business-model-bank/model-config';
 import type {
   AiProviderDetailItem,
   AiProviderListItem,
@@ -8,8 +9,7 @@ import type {
 } from '@lobechat/types';
 import { isEmpty } from 'es-toolkit/compat';
 import type { AIChatModelCard, AiProviderModelListItem, EnabledAiModel } from 'model-bank';
-import { AiModelSourceEnum, isAiModelVisible } from 'model-bank';
-import * as modelBank from 'model-bank';
+import { AiModelSourceEnum, isAiModelVisible, normalizeAiModelType } from 'model-bank';
 import { DEFAULT_MODEL_PROVIDER_LIST } from 'model-bank/modelProviders';
 import pMap from 'p-map';
 
@@ -127,16 +127,18 @@ export class AiInfraRepos {
   aiProviderModel: AiProviderModel;
   private readonly providerConfigs: Record<string, ProviderConfig>;
   aiModelModel: AiModelModel;
+  private modelBankModelsPromise?: ReturnType<typeof loadModels>;
 
   constructor(
     db: LobeChatDatabase,
     userId: string,
     providerConfigs: Record<string, ProviderConfig>,
+    workspaceId?: string,
   ) {
     this.userId = userId;
     this.db = db;
-    this.aiProviderModel = new AiProviderModel(db, userId);
-    this.aiModelModel = new AiModelModel(db, userId);
+    this.aiProviderModel = new AiProviderModel(db, userId, workspaceId);
+    this.aiModelModel = new AiModelModel(db, userId, workspaceId);
     this.providerConfigs = providerConfigs;
   }
 
@@ -177,14 +179,12 @@ export class AiInfraRepos {
     return list
       .filter((item) => item.enabled)
       .sort((a, b) => a.sort! - b.sort!)
-      .map(
-        (item): EnabledProvider => ({
-          id: item.id,
-          logo: item.logo,
-          name: item.name,
-          source: item.source,
-        }),
-      );
+      .map((item): EnabledProvider => ({
+        id: item.id,
+        logo: item.logo,
+        name: item.name,
+        source: item.source,
+      }));
   };
 
   /**
@@ -224,12 +224,13 @@ export class AiInfraRepos {
               displayName: user?.displayName || item.displayName,
               enabled: typeof user.enabled === 'boolean' ? user.enabled : item.enabled,
               id: item.id,
+              pricing: user.pricing || item.pricing,
               providerId: provider.id,
               settings: isEmpty(user.settings)
                 ? item.settings
                 : merge(item.settings || {}, user.settings || {}),
               sort: user.sort ?? undefined,
-              type: user.type || item.type,
+              type: normalizeAiModelType(user.type || item.type),
             };
             return injectSearchSettings(provider.id, mergedModel); // User modified local model, check search settings
           })
@@ -250,7 +251,9 @@ export class AiInfraRepos {
         if (builtinModelKeys.has(`${item.providerId}:${item.id}`)) return false;
         return filterEnabled ? enabledProviderIds.has(item.providerId) && item.enabled : true;
       })
-      .map((item) => injectSearchSettings(item.providerId, item));
+      .map((item) =>
+        injectSearchSettings(item.providerId, { ...item, type: normalizeAiModelType(item.type) }),
+      );
 
     return [...builtinModels, ...appendedUserModels].sort(
       (a, b) => (a?.sort ?? Infinity) - (b?.sort ?? Infinity),
@@ -416,6 +419,9 @@ export class AiInfraRepos {
     for (const m of mergedModel) {
       const builtinType = builtinTypeMap.get(m.id);
       if (builtinType) m.type = builtinType;
+      // Read-time map for the legacy `stt` → `asr` rename (custom models that
+      // aren't in the builtin list and still carry the old value in the DB).
+      m.type = normalizeAiModelType(m.type);
     }
 
     // Filter out DB residual models that are no longer in the builtin list for branding provider
@@ -460,17 +466,20 @@ export class AiInfraRepos {
   /**
    * Fetch builtin models from config
    */
+  private getModelBankModels = () => {
+    this.modelBankModelsPromise ??= loadModels();
+    return this.modelBankModelsPromise;
+  };
+
   private fetchBuiltinModels = async (
     providerId: string,
   ): Promise<AiProviderModelListItem[] | undefined> => {
     try {
-      // TODO: when model-bank is a separate module, we will try import from model-bank/[prividerId] again
-      // @ts-expect-error providerId is string
-      const providerModels = modelBank[providerId];
-
       // use the serverModelLists as the defined server model list
       // fallback to empty array for custom provider
-      const presetList = this.providerConfigs[providerId]?.serverModelLists || providerModels || [];
+      const presetList =
+        this.providerConfigs[providerId]?.serverModelLists ||
+        (await this.getModelBankModels()).filter((model) => model.providerId === providerId);
 
       return (presetList as AIChatModelCard[]).map<AiProviderModelListItem>((m) => ({
         ...m,

@@ -2,7 +2,8 @@
 
 import { type UserCredSummary } from '@lobechat/types';
 import { Avatar, Button, DropdownMenu, Flexbox, Icon, stopPropagation } from '@lobehub/ui';
-import { App, Tag } from 'antd';
+import { confirmModal } from '@lobehub/ui/base-ui';
+import { Tag } from 'antd';
 import {
   Eye,
   File,
@@ -16,10 +17,18 @@ import {
 import { type FC, memo } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { usePermission } from '@/hooks/usePermission';
+
 import { styles } from './style';
 
 interface CredItemProps {
   cred: UserCredSummary;
+  /**
+   * Extra content rendered before the "..." menu — used by the workspace
+   * creds page to slot in the personal-credential share toggle without
+   * duplicating this row's layout.
+   */
+  extra?: React.ReactNode;
   onDelete: (id: number) => void;
   onEdit: (cred: UserCredSummary) => void;
   onView: (cred: UserCredSummary) => void;
@@ -39,23 +48,23 @@ const typeColors: Record<string, string> = {
   'oauth': 'green',
 };
 
-const CredItem: FC<CredItemProps> = memo(({ cred, onEdit, onDelete, onView }) => {
+const CredItem: FC<CredItemProps> = memo(({ cred, extra, onEdit, onDelete, onView }) => {
   const { t } = useTranslation('setting');
-  const { modal } = App.useApp();
+  const { allowed: canManageCredentials } = usePermission('manage_provider_key');
 
   const handleDelete = () => {
-    modal.confirm({
-      centered: true,
+    if (!canManageCredentials) return;
+
+    confirmModal({
       content: t('creds.actions.deleteConfirm.content'),
       okButtonProps: { danger: true },
       okText: t('creds.actions.deleteConfirm.ok'),
       onOk: () => onDelete(cred.id),
       title: t('creds.actions.deleteConfirm.title'),
-      type: 'error',
     });
   };
 
-  const canView = cred.type === 'kv-env' || cred.type === 'kv-header';
+  const canView = canManageCredentials && (cred.type === 'kv-env' || cred.type === 'kv-header');
 
   const menuItems = [
     ...(canView
@@ -72,10 +81,12 @@ const CredItem: FC<CredItemProps> = memo(({ cred, onEdit, onDelete, onView }) =>
       icon: <Icon icon={Pencil} />,
       key: 'edit',
       label: t('creds.actions.edit'),
+      disabled: !canManageCredentials,
       onClick: () => onEdit(cred),
     },
     {
       danger: true,
+      disabled: !canManageCredentials,
       icon: <Icon icon={Trash2} />,
       key: 'delete',
       label: t('creds.actions.delete'),
@@ -106,6 +117,11 @@ const CredItem: FC<CredItemProps> = memo(({ cred, onEdit, onDelete, onView }) =>
           <Flexbox horizontal align="center" gap={8}>
             <span className={styles.title}>{cred.name}</span>
             <Tag color={typeColors[cred.type]}>{t(`creds.types.${cred.type}`)}</Tag>
+            {/* Only populated by organization-scoped list responses (workspaceCreds.list) —
+                distinguishes a member's shared personal credential from one the org owns directly. */}
+            {cred.ownerType === 'user' && (
+              <Tag>{t('creds.owner.sharedBy', { name: cred.ownerDisplayName })}</Tag>
+            )}
           </Flexbox>
           <Flexbox horizontal align="center" gap={8}>
             <code className={styles.key}>{cred.key}</code>
@@ -119,8 +135,9 @@ const CredItem: FC<CredItemProps> = memo(({ cred, onEdit, onDelete, onView }) =>
         </Flexbox>
       </Flexbox>
       <Flexbox horizontal align="center" gap={8} onClick={stopPropagation}>
+        {extra}
         <DropdownMenu items={menuItems} placement="bottomRight">
-          <Button icon={MoreHorizontalIcon} />
+          <Button disabled={!canManageCredentials} icon={MoreHorizontalIcon} />
         </DropdownMenu>
       </Flexbox>
     </Flexbox>

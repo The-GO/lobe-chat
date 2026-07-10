@@ -1,4 +1,5 @@
 import type { LobeAgentChatConfig } from '@lobechat/types';
+import { ReasoningGraphSchema } from '@lobechat/types';
 import { z } from 'zod';
 
 import type { AgentItem } from '@/database/schemas';
@@ -27,15 +28,15 @@ export const CreateAgentRequestSchema = z.object({
   avatar: z.string().nullish(),
   chatConfig: z
     .object({
-      autoCreateTopicThreshold: z.number(),
       disableContextCaching: z.boolean().nullish(),
       displayMode: z.enum(['chat', 'docs']).nullish(),
-      enableAutoCreateTopic: z.boolean().nullish(),
       enableCompressHistory: z.boolean().nullish(),
+      enableGraphMode: z.boolean().nullish(),
       enableHistoryCount: z.boolean().nullish(),
       enableMaxTokens: z.boolean().nullish(),
       enableReasoning: z.boolean().nullish(),
       enableReasoningEffort: z.boolean().nullish(),
+      graph: ReasoningGraphSchema.nullish(),
       historyCount: z.number().nullish(),
       reasoningBudgetToken: z.number().nullish(),
       reasoningEffort: z.enum(['low', 'medium', 'high']).nullish(),
@@ -49,7 +50,7 @@ export const CreateAgentRequestSchema = z.object({
   params: z.record(z.unknown()).nullish(),
   provider: z.string().nullish(),
   systemRole: z.string().nullish(),
-  title: z.string().min(1, '标题不能为空'),
+  title: z.string().min(1, 'Title cannot be empty'),
 });
 
 /**
@@ -70,7 +71,7 @@ export interface AgentDeleteRequest {
 }
 
 export const AgentDeleteRequestSchema = z.object({
-  agentId: z.string().min(1, 'Agent ID 不能为空'),
+  agentId: z.string().min(1, 'Agent ID cannot be empty'),
   migrateSessionTo: z.string().nullish(),
 });
 
@@ -195,5 +196,5 @@ export interface AgentDetailResponse extends AgentItem {
 // ==================== Common Schemas ====================
 
 export const AgentIdParamSchema = z.object({
-  id: z.string().min(1, 'Agent ID 不能为空'),
+  id: z.string().min(1, 'Agent ID cannot be empty'),
 });

@@ -1,13 +1,15 @@
 import { AgentBuilderIdentifier } from '@lobechat/builtin-tool-agent-builder';
 import { WebBrowsingManifest } from '@lobechat/builtin-tool-web-browsing';
 import { REQUEST_TRIGGER_HEADER } from '@lobechat/const';
+import { createVisualFileRef } from '@lobechat/const/visualRef';
 import type { ChatStreamPayload, LobeTool, UIChatMessage } from '@lobechat/types';
-import { ChatErrorType, createVisualFileRef, RequestTrigger } from '@lobechat/types';
+import { ChatErrorType, RequestTrigger } from '@lobechat/types';
 import { act } from '@testing-library/react';
 import { type EnabledAiModel, ModelProvider } from 'model-bank';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DEFAULT_AGENT_CONFIG } from '@/const/settings';
+import { isCanUseFC } from '@/helpers/isCanUseFC';
 import * as toolEngineeringModule from '@/helpers/toolEngineering';
 import { agentDocumentService } from '@/services/agentDocument';
 import { useAgentStore } from '@/store/agent';
@@ -81,7 +83,6 @@ const createMockResolvedConfig = (overrides?: {
     },
     chatConfig: {
       searchMode: 'off',
-      autoCreateTopicThreshold: 2,
       ...overrides?.chatConfig,
     },
     enabledManifests: overrides?.enabledManifests ?? [],
@@ -197,6 +198,34 @@ describe('ChatService', () => {
           messages: expect.anything(),
         }),
         expect.anything(),
+      );
+    });
+
+    it('should pass chat mode to context engineering when the selected model lacks function calling', async () => {
+      const contextEngineeringSpy = vi
+        .spyOn(mechaModule, 'contextEngineering')
+        .mockResolvedValue([]);
+      vi.mocked(isCanUseFC).mockReturnValue(false);
+      const messages = [{ content: 'Hello', role: 'user' }] as UIChatMessage[];
+
+      await chatService.createAssistantMessage({
+        model: 'gemini-3.1-flash-lite-image',
+        messages,
+        provider: ModelProvider.LobeHub,
+        resolvedAgentConfig: createMockResolvedConfig({
+          agentConfig: {
+            model: 'gemini-3.1-flash-lite-image',
+            provider: ModelProvider.LobeHub,
+          },
+          chatConfig: { enableAgentMode: true },
+        }),
+      });
+
+      expect(isCanUseFC).toHaveBeenCalledWith('gemini-3.1-flash-lite-image', ModelProvider.LobeHub);
+      expect(contextEngineeringSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          enableAgentMode: false,
+        }),
       );
     });
 
@@ -633,7 +662,7 @@ describe('ChatService', () => {
                     // literal captured in contextEngineering.ts at import time, so the
                     // spy has no effect on the downstream pipeline. The effective
                     // behavior is therefore vision=disabled, and the image is
-                    // downgraded to a placeholder (see LOBE-7214).
+                    // downgraded to a placeholder (see ).
                     text: `Hello
 
 [image omitted: not supported by this model]
@@ -647,7 +676,7 @@ describe('ChatService', () => {
 <files_info>
 <images>
 <images_docstring>here are user upload images you can refer to</images_docstring>
-<image ref="image_1" name="abc.png"></image>
+<image ref="image_1" name="abc.png" url="http://example.com/image.jpg"></image>
 </images>
 </files_info>
 <!-- END SYSTEM CONTEXT -->`,
@@ -790,7 +819,7 @@ describe('ChatService', () => {
 <files_info>
 <images>
 <images_docstring>here are user upload images you can refer to</images_docstring>
-<image ref="${visualRef}" name="local-image.png"></image>
+<image ref="${visualRef}" name="local-image.png" url="http://127.0.0.1:3000/uploads/image.png"></image>
 </images>
 </files_info>
 <!-- END SYSTEM CONTEXT -->`,
@@ -891,7 +920,7 @@ describe('ChatService', () => {
 <files_info>
 <images>
 <images_docstring>here are user upload images you can refer to</images_docstring>
-<image ref="${visualRef}" name="remote-image.jpg"></image>
+<image ref="${visualRef}" name="remote-image.jpg" url="https://example.com/remote-image.jpg"></image>
 </images>
 </files_info>
 <!-- END SYSTEM CONTEXT -->`,
@@ -1584,7 +1613,7 @@ describe('ChatService', () => {
           .spyOn(mechaModule, 'contextEngineering')
           .mockResolvedValue([]);
         vi.spyOn(chatService, 'getChatCompletion').mockResolvedValue(new Response(''));
-        vi.spyOn(agentDocumentService, 'getDocuments').mockResolvedValue([
+        vi.spyOn(agentDocumentService, 'getContextDocuments').mockResolvedValue([
           {
             content: 'Project setup steps',
             filename: 'setup.md',
@@ -1604,7 +1633,9 @@ describe('ChatService', () => {
           resolvedAgentConfig: createMockResolvedConfig(),
         });
 
-        expect(agentDocumentService.getDocuments).toHaveBeenCalledWith({ agentId: 'agent-1' });
+        expect(agentDocumentService.getContextDocuments).toHaveBeenCalledWith({
+          agentId: 'agent-1',
+        });
         expect(contextEngineeringSpy).toHaveBeenCalledWith(
           expect.objectContaining({
             agentDocuments: [
@@ -1623,7 +1654,7 @@ describe('ChatService', () => {
           .spyOn(mechaModule, 'contextEngineering')
           .mockResolvedValue([]);
         vi.spyOn(chatService, 'getChatCompletion').mockResolvedValue(new Response(''));
-        vi.spyOn(agentDocumentService, 'getDocuments').mockResolvedValue([
+        vi.spyOn(agentDocumentService, 'getContextDocuments').mockResolvedValue([
           {
             content: 'Edited agent setup',
             filename: 'builder-target.md',
@@ -1647,7 +1678,9 @@ describe('ChatService', () => {
           }),
         });
 
-        expect(agentDocumentService.getDocuments).toHaveBeenCalledWith({ agentId: 'edited-agent' });
+        expect(agentDocumentService.getContextDocuments).toHaveBeenCalledWith({
+          agentId: 'edited-agent',
+        });
         expect(contextEngineeringSpy).toHaveBeenCalledWith(
           expect.objectContaining({
             agentDocuments: [
@@ -1705,7 +1738,7 @@ describe('ChatService', () => {
       };
 
       await chatService.getChatCompletion(params, {
-        requestTrigger: RequestTrigger.VisualAnalysis,
+        metadata: { trigger: RequestTrigger.VisualAnalysis },
       });
 
       expect(mockFetchSSE).toHaveBeenCalledWith(
@@ -1719,6 +1752,7 @@ describe('ChatService', () => {
 
       const payload = JSON.parse(mockFetchSSE.mock.calls[0][1].body);
       expect(payload).not.toHaveProperty('requestTrigger');
+      expect(payload).not.toHaveProperty('metadata');
     });
 
     it('should make a POST request with chatCompletion apiMode in non-openai provider payload', async () => {
@@ -1826,7 +1860,7 @@ describe('ChatService', () => {
   describe('fetchPresetTaskResult', () => {
     it('should not wait for agent documents on preset task chains', async () => {
       vi.spyOn(chatService, 'getChatCompletion').mockResolvedValue(new Response(''));
-      vi.spyOn(agentDocumentService, 'getDocuments').mockResolvedValue([]);
+      vi.spyOn(agentDocumentService, 'getContextDocuments').mockResolvedValue([]);
 
       await chatService.fetchPresetTaskResult({
         abortController: new AbortController(),
@@ -1837,7 +1871,7 @@ describe('ChatService', () => {
         },
       });
 
-      expect(agentDocumentService.getDocuments).not.toHaveBeenCalled();
+      expect(agentDocumentService.getContextDocuments).not.toHaveBeenCalled();
     });
 
     it('should handle successful chat completion response', async () => {

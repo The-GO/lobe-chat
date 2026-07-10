@@ -1,18 +1,28 @@
+import { z } from 'zod';
+
+import type { SerializedAgentHook } from '../agentHook';
+import type { WorkingDirConfig } from '../device';
 import type { BaseDataModel } from '../meta';
 
 // Type definitions
 export type ShareVisibility = 'private' | 'link';
 
 export type TimeGroupId =
-  | 'today'
-  | 'yesterday'
-  | 'week'
-  | 'month'
-  | `${number}-${string}`
-  | `${number}`;
+  'today' | 'yesterday' | 'week' | 'month' | `${number}-${string}` | `${number}`;
 
-export type TopicGroupMode = 'byTime' | 'byProject' | 'flat';
+export type TopicGroupMode = 'byTime' | 'byProject' | 'flat' | 'byStatus';
 export type TopicSortBy = 'createdAt' | 'updatedAt';
+
+/**
+ * Server-side ordering for the topic list query.
+ * - `updatedAt` (default): favorites first, then most-recently-updated.
+ * - `status`: favorites first, then by status priority
+ *   (waitingForHuman → running → active → paused → failed → completed →
+ *   archived), then most-recently-updated within each status. Backs the
+ *   sidebar "group by status" mode so the highest-priority topics stay on the
+ *   first page regardless of pagination.
+ */
+export type TopicQuerySortBy = 'updatedAt' | 'status';
 
 export interface GroupedTopic {
   children: ChatTopic[];
@@ -123,6 +133,15 @@ export interface ChatTopicMetadata {
    *     `workingDirectory`.
    */
   heteroSessionId?: string;
+  /**
+   * Heterogeneous-agent session ids scoped by effective working directory.
+   * Claude Code stores native sessions under a cwd-specific project bucket, so
+   * one topic may need different resume ids when the user switches worktrees.
+   *
+   * `heteroSessionId` remains the currently selected cwd's latest id for legacy
+   * readers; this map lets the UI restore the right id when switching back.
+   */
+  heteroSessionIdByWorkingDirectory?: Record<string, string>;
   model?: string;
   /**
    * Free-form feedback collected after agent onboarding completion.
@@ -144,6 +163,21 @@ export interface ChatTopicMetadata {
    */
   runningOperation?: {
     assistantMessageId: string;
+    /**
+     * Serialized lifecycle hooks (onComplete / onError) registered for this run.
+     *
+     * Persisted so the heterogeneous-agent terminal path can fire them through
+     * the same `hookDispatcher` the normal LLM runtime uses, instead of a
+     * bespoke single-webhook callback. Read by every hetero terminal site —
+     * the CLI exit (`aiAgent.heteroFinish`), the remote-agent `agentNotify`
+     * done signal, and a synchronous dispatch failure — so the task lifecycle
+     * (`onTopicComplete`) and IM bot completion callbacks fire uniformly.
+     *
+     * Only hooks carrying a webhook config are serializable (handler closures
+     * can't cross a process boundary); queue mode delivers these webhooks while
+     * local mode dispatches the in-memory handlers registered at dispatch time.
+     */
+    hooks?: SerializedAgentHook[];
     operationId: string;
     scope?: string;
     threadId?: string | null;
@@ -160,6 +194,16 @@ export interface ChatTopicMetadata {
    * For sidebar grouping, topics are bucketed by this field (byProject mode).
    */
   workingDirectory?: string;
+  /**
+   * Structured topic-level working directory snapshot.
+   *
+   * Kept as a single object, not a list. `workingDirectory` remains the
+   * backwards-compatible effective path; this field preserves the source path
+   * and git/worktree metadata needed to restore the same worktree when the user
+   * switches back to the topic, and to render branch/worktree context in topic
+   * lists without probing the device.
+   */
+  workingDirectoryConfig?: WorkingDirConfig;
 }
 
 export interface ChatTopicSummary {
@@ -168,25 +212,66 @@ export interface ChatTopicSummary {
   provider: string;
 }
 
-export type ChatTopicStatus = 'active' | 'completed' | 'archived';
+/**
+ * Canonical, ordered list of topic statuses. Single source of truth for both
+ * the {@link ChatTopicStatus} type and the {@link chatTopicStatusSchema} zod
+ * validator (consumed by the topic TRPC router). Add new statuses here.
+ *
+ * - `unread`: a completed generation the user hasn't read yet. Persisted so the
+ *   unread indicator survives reload and syncs across devices; cleared back to
+ *   `active` when the user opens the topic. See operation slice unread actions.
+ */
+export const TOPIC_STATUSES = [
+  'active',
+  'running',
+  'paused',
+  'waitingForHuman',
+  'failed',
+  'completed',
+  'archived',
+  'unread',
+] as const;
+
+/** Zod validator for {@link ChatTopicStatus}, derived from {@link TOPIC_STATUSES}. */
+export const chatTopicStatusSchema = z.enum(TOPIC_STATUSES);
+
+export type ChatTopicStatus = z.infer<typeof chatTopicStatusSchema>;
 
 export interface ChatTopic extends Omit<BaseDataModel, 'meta'> {
   completedAt?: Date | null;
+  /** Server-side mock until real cost aggregation lands. */
+  cost?: number | null;
+  description?: string | null;
   favorite?: boolean;
+  /** First user message (sliced server-side, used as preview fallback). */
+  firstUserMessage?: string | null;
   historySummary?: string;
+  /** Total message count for the topic. */
+  messageCount?: number | null;
   metadata?: ChatTopicMetadata;
   sessionId?: string;
+  /**
+   * Sort key for the sidebar list: the topic's latest message-activity time
+   * (server `topicActivityAt`), falling back to `updatedAt`. Kept separate from
+   * `updatedAt` so the client sort matches the server ORDER BY (no list jumping)
+   * while `updatedAt` still reflects real row edits like rename/favorite.
+   * (LOBE-11543)
+   */
+  sortUpdatedAt?: number;
   status?: ChatTopicStatus | null;
   title: string;
+  /** Server-side mock until real token aggregation lands. */
+  tokenUsage?: number | null;
   trigger?: string | null;
+  userId?: string;
 }
 
 export type ChatTopicMap = Record<string, ChatTopic>;
 
 export interface TopicRankItem {
+  agentId: string | null;
   count: number;
   id: string;
-  sessionId: string | null;
   title: string | null;
 }
 
@@ -254,9 +339,21 @@ export interface QueryTopicParams {
   isInbox?: boolean;
   pageSize?: number;
   /**
+   * Server-side ordering. Defaults to `updatedAt`. Use `status` to back the
+   * sidebar "group by status" mode so high-priority topics stay on page one.
+   */
+  sortBy?: TopicQuerySortBy;
+  /**
    * Include only topics matching the given trigger types (positive filter)
    */
   triggers?: string[];
+  /**
+   * When true, the response includes heavier card-detail fields
+   * (`firstUserMessage`, `messageCount`, `description`, `trigger`, plus mock
+   * `cost` / `tokenUsage`). Only the per-agent Topics management page opts
+   * in — sidebar paths stay lean.
+   */
+  withDetails?: boolean;
 }
 
 /**

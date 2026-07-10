@@ -6,6 +6,7 @@ import { memo, useCallback, useEffect, useRef } from 'react';
 import { type VListHandle } from 'virtua';
 import { VList } from 'virtua';
 
+import AsyncError from '@/components/AsyncError';
 import SkeletonList from '@/features/NavPanel/components/SkeletonList';
 import TopicEmpty from '@/features/TopicEmpty';
 import { useChatStore } from '@/store/chat';
@@ -13,7 +14,7 @@ import { topicSelectors } from '@/store/chat/selectors';
 
 import TopicItem from '../List/Item';
 
-const ITEM_HEIGHT = 44; // Each topic item height
+const ITEM_HEIGHT = 36; // Each topic item height (NavItem height, no vertical padding)
 
 interface ContentProps {
   open: boolean;
@@ -30,6 +31,7 @@ const Content = memo<ContentProps>(({ open, searchKeyword }) => {
     activeThreadId,
     hasMore,
     isLoadingMore,
+    loadMoreError,
     isExpandingPageSize,
     loadMoreTopics,
     activeAgentId,
@@ -39,6 +41,7 @@ const Content = memo<ContentProps>(({ open, searchKeyword }) => {
     s.activeThreadId,
     topicSelectors.hasMoreTopics(s),
     topicSelectors.isLoadingMoreTopics(s),
+    topicSelectors.loadMoreTopicsError(s),
     topicSelectors.isExpandingPageSize(s),
     s.loadMoreTopics,
     s.activeAgentId,
@@ -60,7 +63,6 @@ const Content = memo<ContentProps>(({ open, searchKeyword }) => {
   }, [isSearching]);
 
   // Only search when there's a keyword (pass undefined to disable SWR)
-  // Note: searchTopics uses sessionId in the service, but agentId in the hook
   useSearchTopics(isSearching ? trimmedKeyword : undefined, {
     agentId: activeAgentId,
     groupId: undefined,
@@ -74,9 +76,15 @@ const Content = memo<ContentProps>(({ open, searchKeyword }) => {
   const activeTopicList = isSearching ? searchResults : allTopicList;
   const count = activeTopicList?.length || 0;
 
+  useEffect(() => {
+    if (fetchedCountRef.current > count) {
+      fetchedCountRef.current = count - 1;
+    }
+  }, [count]);
+
   // Initial load: calculate how many items needed to fill viewport
   useEffect(() => {
-    if (!open || initializedRef.current || isLoadingMore || isSearching) return;
+    if (!open || initializedRef.current || isLoadingMore || isSearching || loadMoreError) return;
 
     const timer = setTimeout(() => {
       const ref = virtuaRef.current;
@@ -107,7 +115,7 @@ const Content = memo<ContentProps>(({ open, searchKeyword }) => {
     }, 100);
 
     return () => clearTimeout(timer);
-  }, [open, count, hasMore, loadMoreTopics, isLoadingMore]);
+  }, [open, count, hasMore, loadMoreTopics, isLoadingMore, loadMoreError, isSearching]);
 
   // Reset initialized flag when drawer closes
   useEffect(() => {
@@ -122,7 +130,7 @@ const Content = memo<ContentProps>(({ open, searchKeyword }) => {
     if (isSearching) return;
 
     const ref = virtuaRef.current;
-    if (!ref || !hasMore) return;
+    if (!ref || !hasMore || loadMoreError) return;
 
     // Use findItemIndex to detect scroll position
     const bottomVisibleIndex = ref.findItemIndex(ref.scrollOffset + ref.viewportSize);
@@ -132,12 +140,27 @@ const Content = memo<ContentProps>(({ open, searchKeyword }) => {
       fetchedCountRef.current = count;
       await loadMoreTopics();
     }
-  }, [hasMore, loadMoreTopics, count, isSearching]);
+  }, [hasMore, loadMoreTopics, count, isSearching, loadMoreError]);
 
   const showLoading = (isLoadingMore || isExpandingPageSize) && !isSearching;
   const showSearchLoading = isSearching && isSearchingTopic;
+  const showLoadMoreError = !isSearching && !!loadMoreError && !isLoadingMore;
 
   // Show empty state when no topics
+  if (count === 0 && showLoadMoreError) {
+    return (
+      <Flexbox padding={12}>
+        <AsyncError
+          error={loadMoreError}
+          variant={'block'}
+          onRetry={() => {
+            void loadMoreTopics();
+          }}
+        />
+      </Flexbox>
+    );
+  }
+
   if (count === 0 && !showLoading && !showSearchLoading) {
     return <TopicEmpty search={Boolean(searchKeyword)} />;
   }
@@ -159,7 +182,7 @@ const Content = memo<ContentProps>(({ open, searchKeyword }) => {
       onScroll={handleScroll}
     >
       {activeTopicList?.map((topic) => (
-        <Flexbox gap={1} key={topic.id} padding={'4px 8px'}>
+        <Flexbox gap={1} key={topic.id} paddingInline={4}>
           <TopicItem
             active={activeTopicId === topic.id}
             fav={topic.favorite}
@@ -174,6 +197,17 @@ const Content = memo<ContentProps>(({ open, searchKeyword }) => {
       {showLoading && (
         <Flexbox padding={'4px 8px'}>
           <SkeletonList rows={3} />
+        </Flexbox>
+      )}
+      {showLoadMoreError && (
+        <Flexbox padding={'4px 8px'}>
+          <AsyncError
+            error={loadMoreError}
+            variant={'inline'}
+            onRetry={() => {
+              void loadMoreTopics();
+            }}
+          />
         </Flexbox>
       )}
     </VList>

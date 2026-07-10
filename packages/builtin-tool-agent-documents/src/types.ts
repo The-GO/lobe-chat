@@ -15,7 +15,7 @@ export const AgentDocumentsApiName = {
 export interface CreateDocumentArgs {
   content: string;
   hintIsSkill?: boolean;
-  target?: 'agent' | 'currentTopic';
+  scope?: 'agent' | 'currentTopic';
   title: string;
 }
 
@@ -154,7 +154,14 @@ export interface AgentDocumentReference {
 }
 
 export interface ListDocumentsArgs {
-  target?: 'agent' | 'currentTopic';
+  /**
+   * Restrict the listing to the direct children of this folder document
+   * (the folder's `documentId`). The progressive index collapses folders and
+   * surfaces this id so the model can expand a folder on demand.
+   */
+  parentId?: string;
+  scope?: 'agent' | 'currentTopic';
+  sourceType?: 'all' | 'file' | 'web';
 }
 
 export interface ListDocumentsState {

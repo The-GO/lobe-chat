@@ -1,6 +1,6 @@
 ---
 name: version-release
-description: "Version release workflow. Use when the user mentions 'release', 'hotfix', 'version upgrade', 'weekly release', or '发版'/'发布'/'小班车'. This skill is for release process and GitHub Release notes (not docs/changelog page writing)."
+description: 'Version release workflow — release process and GitHub Release notes (not docs/changelog pages).'
 disable-model-invocation: true
 argument-hint: '[minor|patch] [version?]'
 ---
@@ -24,7 +24,7 @@ If the user asks for website changelog pages, load `../docs-changelog/SKILL.md`.
 
 For every `/version-release` execution, you MUST load and apply:
 
-- `../microcopy/SKILL.md`
+- `../../../DESIGN.md` (Voice & Content)
 
 ## Overview
 

@@ -32,6 +32,8 @@ import type { LobeToolManifest } from '../tools/types';
  * Injected by caller to check if model supports specific capabilities
  */
 export interface ModelCapabilityChecker {
+  /** Check if audio input is supported */
+  isCanUseAudio?: (model: string, provider: string) => boolean;
   /** Check if function calling is supported */
   isCanUseFC?: (model: string, provider: string) => boolean;
   /** Check if video is supported */
@@ -213,6 +215,10 @@ export interface MessagesEngineParams {
   messages: UIChatMessage[];
   /** Model ID */
   model: string;
+  /** Human-friendly model name, e.g. `Fable 5`. Omit when unknown. */
+  modelDisplayName?: string;
+  /** Model knowledge cutoff date, e.g. `2024-06`. Omit when unknown. */
+  modelKnowledgeCutoff?: string;
   /** Provider ID */
   provider: string;
 
@@ -223,6 +229,13 @@ export interface MessagesEngineParams {
   timezone?: string | null;
 
   // ========== Agent configuration ==========
+  /**
+   * Whether the agent runs in agent mode. When explicitly `false` (chat mode)
+   * the engine force-disables agentic-only injectors — skills (`<available_skills>`)
+   * and agent documents — regardless of whether their data is supplied.
+   * Undefined / true → agent mode (default).
+   */
+  enableAgentMode?: boolean;
   /** Whether to enable history message count limit */
   enableHistoryCount?: boolean;
   /** Force finish flag: when true, injects summary prompt for max-steps completion */

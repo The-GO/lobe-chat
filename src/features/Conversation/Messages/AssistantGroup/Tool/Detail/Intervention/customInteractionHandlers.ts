@@ -1,4 +1,5 @@
 import { ClaudeCodeIdentifier } from '@lobechat/builtin-tool-claude-code';
+import { LobeAgentApiName, LobeAgentIdentifier } from '@lobechat/builtin-tool-lobe-agent';
 import { UserInteractionIdentifier } from '@lobechat/builtin-tool-user-interaction';
 import {
   WebOnboardingApiName,
@@ -6,10 +7,10 @@ import {
 } from '@lobechat/builtin-tool-web-onboarding';
 import { buildAgentMarketplaceToolResult } from '@lobechat/builtin-tool-web-onboarding/agentMarketplace';
 import type { OnboardingAgentMarketplacePickSnapshot } from '@lobechat/types';
+import { pickString } from '@lobechat/utils';
 
+import { installMarketplaceAgents } from '@/services/installMarketplaceAgents';
 import { topicService } from '@/services/topic';
-
-import { installMarketplaceAgents } from './installMarketplaceAgents';
 
 interface SubmitToolInteractionOptions {
   createUserMessage?: boolean;
@@ -39,8 +40,6 @@ const isAgentMarketplaceCall = (identifier: string, apiName?: string) =>
 
 const isStringArray = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((item) => typeof item === 'string');
-
-const pickString = (value: unknown) => (typeof value === 'string' ? value : undefined);
 
 const resolveMarketplacePickBase = (
   payload: Record<string, unknown>,
@@ -144,8 +143,18 @@ const HETERO_CUSTOM_INTERACTION_IDENTIFIERS = new Set<string>([ClaudeCodeIdentif
 export const isHeteroInteractionIdentifier = (identifier: string) =>
   HETERO_CUSTOM_INTERACTION_IDENTIFIERS.has(identifier);
 
+/**
+ * lobe-agent reuses the user-interaction `askUserQuestion` card. Unlike the
+ * standalone tool (whose whole identifier is a custom interaction), lobe-agent
+ * has other APIs (createPlan / clearTodos …) that must keep the default
+ * approve/reject UI — so only its `askUserQuestion` API is a custom interaction.
+ */
+const isLobeAgentAskUserQuestion = (identifier: string, apiName?: string) =>
+  identifier === LobeAgentIdentifier && apiName === LobeAgentApiName.askUserQuestion;
+
 export const isCustomInteractionIdentifier = (identifier: string, apiName?: string) =>
   identifier === UserInteractionIdentifier ||
+  isLobeAgentAskUserQuestion(identifier, apiName) ||
   isHeteroInteractionIdentifier(identifier) ||
   Boolean(findCustomInteractionSubmitHandler(identifier, apiName));
 
